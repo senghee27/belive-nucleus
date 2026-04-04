@@ -114,13 +114,20 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
 
-    // Handle Lark challenge verification
+    // Log raw payload for debugging
+    console.log('[lark:raw]', JSON.stringify(body).slice(0, 500))
+
+    // Handle Lark challenge verification (v1 and v2 format)
     if (body.challenge) {
       return NextResponse.json({ challenge: body.challenge })
     }
 
+    // Handle Lark v2 URL verification
+    if (body.type === 'url_verification') {
+      return NextResponse.json({ challenge: body.challenge ?? body.token })
+    }
+
     // Use after() to process in background after response is sent
-    // This keeps the serverless function alive on Vercel
     after(async () => {
       await processLarkEvent(body)
     })
