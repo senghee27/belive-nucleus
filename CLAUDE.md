@@ -126,6 +126,21 @@ Domain skills:
 At the start of every task, state which skills you are loading
 and confirm you have read them before writing any code.
 
+## UI/UX Skill
+
+UI/UX Pro Max is installed at .claude/skills/ui-ux-pro-max/
+
+Before building ANY frontend component or page:
+1. Run search.py with relevant keywords (style, product type, ux, typography)
+2. Generate or read design-system/MASTER.md
+3. Check if design-system/pages/[page-name].md exists
+4. Implement using those exact tokens — never deviate
+
+Stack flag to always use: --stack nextjs
+
+BeLive Nucleus aesthetic keywords:
+"command center", "dark ops", "real-time", "war room", "data dense"
+
 ## What Is NOT Built Yet
 - Auth (coming Phase 2)
 - CFO / CTO agents (coming Phase 2)
