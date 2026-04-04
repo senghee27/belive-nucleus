@@ -105,6 +105,27 @@ Phase 1 — Inbox + Decision Engine
 - Decision proposal + approve/reject
 - Decision logged to memory
 
+## Skills Available
+
+When working on specific tasks, load the relevant skill first:
+
+Technical skills:
+- .claude/skills/technical/supabase-migrations.md → any DB work
+- .claude/skills/technical/api-routes.md → any API route
+- .claude/skills/technical/realtime.md → realtime features
+- .claude/skills/technical/error-handling.md → always load this
+- .claude/skills/technical/typescript-patterns.md → always load this
+
+Domain skills:
+- .claude/skills/domain/belive-context.md → always load this
+- .claude/skills/domain/lark-integration.md → any Lark work
+- .claude/skills/domain/chatwoot-api.md → any Chatwoot work
+- .claude/skills/domain/anthropic-api.md → any AI agent work
+
+## Skill Loading Instruction
+At the start of every task, state which skills you are loading
+and confirm you have read them before writing any code.
+
 ## What Is NOT Built Yet
 - Auth (coming Phase 2)
 - CFO / CTO agents (coming Phase 2)
