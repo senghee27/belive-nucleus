@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { parseChatwootPayload } from '@/lib/chatwoot'
 import { classifyEvent } from '@/lib/agents/classify'
@@ -88,10 +88,10 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
 
-    // Return 200 immediately — process async
-    processChatwootEvent(body).catch((err) =>
-      console.error('[chatwoot:async]', err instanceof Error ? err.message : err)
-    )
+    // Use after() to process in background after response is sent
+    after(async () => {
+      await processChatwootEvent(body)
+    })
 
     return NextResponse.json({ ok: true })
   } catch (error) {

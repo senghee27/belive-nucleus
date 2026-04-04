@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { after } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { classifyEvent } from '@/lib/agents/classify'
 import { proposeDecision } from '@/lib/agents/propose'
@@ -118,10 +119,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ challenge: body.challenge })
     }
 
-    // Return 200 immediately — process async
-    processLarkEvent(body).catch((err) =>
-      console.error('[lark:async]', err instanceof Error ? err.message : err)
-    )
+    // Use after() to process in background after response is sent
+    // This keeps the serverless function alive on Vercel
+    after(async () => {
+      await processLarkEvent(body)
+    })
 
     return NextResponse.json({ ok: true })
   } catch (error) {
