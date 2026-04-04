@@ -1,18 +1,19 @@
-export default function InboxPage() {
-  return (
-    <div className="flex flex-col items-center justify-center min-h-[60vh]">
-      <div className="flex items-center gap-2 mb-4">
-        <span className="w-2 h-2 rounded-full bg-[#4BF2A2] animate-pulse" />
-        <span className="font-mono text-xs text-[#4B5A7A] tracking-widest uppercase">
-          Live
-        </span>
-      </div>
-      <h1 className="text-2xl font-semibold text-[#E8EEF8] mb-2">
-        BeLive Nucleus
-      </h1>
-      <p className="text-[#8A9BB8] text-sm">
-        Inbox coming soon — Phase 1A foundation complete.
-      </p>
-    </div>
-  )
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { DecisionTable } from '@/components/inbox/DecisionTable'
+import type { Decision } from '@/lib/types'
+
+export const dynamic = 'force-dynamic'
+
+export default async function InboxPage() {
+  const { data, error } = await supabaseAdmin
+    .from('decisions')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(50)
+
+  if (error) {
+    console.error('[inbox:fetch]', error.message)
+  }
+
+  return <DecisionTable initialData={(data as Decision[]) ?? []} />
 }

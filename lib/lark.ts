@@ -28,11 +28,11 @@ export async function getLarkToken(): Promise<string> {
       throw new Error(`Lark token response missing token: ${JSON.stringify(data)}`)
     }
 
-    cachedToken = data.tenant_access_token
+    cachedToken = data.tenant_access_token as string
     // Cache with 60 second buffer before actual expiry (7200s)
     tokenExpiresAt = now + (data.expire - 60) * 1000
 
-    return cachedToken
+    return cachedToken!
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error'
     console.error('[lark:getToken]', message)
