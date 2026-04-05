@@ -71,10 +71,10 @@ export async function sendEveningOCCs(targetClusters?: string[], testChatId?: st
 
   for (const { cluster, chat_id } of clusters) {
     try {
-      const sendTo = testChatId ?? chat_id
+      const { getLarkToken, getSafeChatId } = await import('@/lib/lark')
+      const sendTo = getSafeChatId(testChatId ?? chat_id, 'chat_id')
       const { cardJson, textSummary } = await generateOCCCard(cluster, sendTo)
 
-      const { getLarkToken } = await import('@/lib/lark')
       const token = await getLarkToken()
       const res = await fetch('https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=chat_id', {
         method: 'POST',

@@ -1,5 +1,29 @@
 const LARK_API_BASE = 'https://open.larksuite.com'
 
+// ===== SAFETY GATE =====
+// When TEST_MODE is true, ALL outbound messages are redirected to the test group.
+// Set to false ONLY when ready to go live with real cluster groups.
+const TEST_MODE = true
+const TEST_CHAT_ID = 'oc_585301f0077f09015428801da0cba90d' // Nucleus Testing Group
+
+// Lee's open_id is always allowed (DMs to Lee are safe)
+const LEE_OPEN_ID = process.env.LEE_LARK_CHAT_ID ?? ''
+
+function getSafeChatId(chatId: string, receiveIdType: string): string {
+  // Always allow DMs to Lee
+  if (receiveIdType === 'open_id') return chatId
+  if (chatId === LEE_OPEN_ID) return chatId
+
+  // In test mode, redirect all group messages to test group
+  if (TEST_MODE && chatId !== TEST_CHAT_ID) {
+    console.log(`[lark:safety] Redirected ${chatId} → TEST GROUP`)
+    return TEST_CHAT_ID
+  }
+
+  return chatId
+}
+// ===== END SAFETY GATE =====
+
 let cachedToken: string | null = null
 let tokenExpiresAt = 0
 
@@ -26,11 +50,12 @@ export async function getLarkToken(): Promise<string> {
 
 export async function sendLarkMessage(chatId: string, message: string, receiveIdType = 'chat_id'): Promise<boolean> {
   try {
+    const safeChatId = getSafeChatId(chatId, receiveIdType)
     const token = await getLarkToken()
     const res = await fetch(`${LARK_API_BASE}/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text: message }) }),
+      body: JSON.stringify({ receive_id: safeChatId, msg_type: 'text', content: JSON.stringify({ text: message }) }),
     })
     const data = await res.json()
     if (data.code !== 0) { console.error('[lark:send]', `${data.code}: ${data.msg}`); return false }
@@ -40,3 +65,6 @@ export async function sendLarkMessage(chatId: string, message: string, receiveId
     return false
   }
 }
+
+// Export for other modules that send cards directly
+export { TEST_MODE, TEST_CHAT_ID, getSafeChatId }
