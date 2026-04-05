@@ -13,6 +13,7 @@ import {
   Wrench,
   AlertTriangle,
   LayoutGrid,
+  Clock,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
@@ -26,6 +27,7 @@ const NAV_ITEMS = [
   { href: '/cto', icon: Code, label: 'CTO', color: '#4BF2A2' },
   { href: '/issues', icon: AlertTriangle, label: 'Issues', showRedBadge: true },
   { href: '/groups', icon: LayoutGrid, label: 'Groups' },
+  { href: '/schedules', icon: Clock, label: 'Schedules' },
   { href: '/memory', icon: Brain, label: 'Memory' },
   { href: '/settings', icon: Wrench, label: 'Settings' },
 ]

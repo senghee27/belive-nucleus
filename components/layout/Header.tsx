@@ -11,6 +11,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/cto': 'CTO Agent',
   '/issues': 'Issues',
   '/groups': 'Groups',
+  '/schedules': 'Scan Schedules',
   '/memory': 'Agent Memory',
   '/settings': 'Settings',
 }

@@ -1,42 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { scanTestClusters } from '@/lib/lark-groups'
-import { sendMorningBriefings } from '@/lib/briefings/morning'
+import { getSchedulesDueNow, executeSchedule, updateScheduleAfterRun } from '@/lib/scheduler'
 import { checkAndEscalateOverdueIssues } from '@/lib/issues'
-import { sendIssuesSummaryToLee } from '@/lib/briefings/issue-dm'
-
-function getTaskFromTime(): string {
-  const utcHour = new Date().getUTCHours()
-  if (utcHour === 0) return 'morning-briefing'
-  if (utcHour === 4) return 'midday-scan'
-  if (utcHour === 14) return 'evening-review'
-  return 'check-escalations'
-}
-
-async function runTask(task: string) {
-  switch (task) {
-    case 'morning-briefing':
-      return { task, result: await sendMorningBriefings() }
-
-    case 'midday-scan':
-    case 'evening-review':
-    case 'scan': {
-      const scanResult = await scanTestClusters()
-      const escalationResult = await checkAndEscalateOverdueIssues()
-      return { task, scan: scanResult, escalations: escalationResult }
-    }
-
-    case 'check-escalations': {
-      const result = await checkAndEscalateOverdueIssues()
-      if (result.escalated > 0) {
-        await sendIssuesSummaryToLee()
-      }
-      return { task, result }
-    }
-
-    default:
-      return { task, result: 'Unknown task' }
-  }
-}
+import type { ScanSchedule } from '@/lib/scheduler'
 
 export async function GET(req: NextRequest) {
   try {
@@ -45,13 +10,33 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const task = getTaskFromTime()
-    const result = await runTask(task)
-    return NextResponse.json({ ok: true, ...result })
+    // Check for due schedules
+    const dueSchedules = await getSchedulesDueNow()
+    const results: Record<string, unknown> = {}
+
+    for (const schedule of dueSchedules) {
+      try {
+        const result = await executeSchedule(schedule as ScanSchedule)
+        await updateScheduleAfterRun(schedule.id, 'success', result.summary)
+        results[schedule.name] = result
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : 'Unknown'
+        await updateScheduleAfterRun(schedule.id, 'failed', msg)
+        results[schedule.name] = { error: msg }
+      }
+    }
+
+    // Also check escalations
+    const escalations = await checkAndEscalateOverdueIssues()
+
+    return NextResponse.json({
+      ok: true,
+      schedules_run: dueSchedules.map(s => s.name),
+      results,
+      escalations: { escalated: escalations.escalated },
+    })
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error'
-    console.error('[cron:route]', message)
-    return NextResponse.json({ error: message }, { status: 500 })
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Unknown' }, { status: 500 })
   }
 }
 
@@ -63,12 +48,24 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json().catch(() => ({}))
-    const task = (body as Record<string, string>).task ?? getTaskFromTime()
-    const result = await runTask(task)
-    return NextResponse.json({ ok: true, ...result })
+    const task = (body as Record<string, string>).task
+
+    if (task === 'check-escalations') {
+      const result = await checkAndEscalateOverdueIssues()
+      return NextResponse.json({ ok: true, task, result })
+    }
+
+    // Default: run due schedules
+    const dueSchedules = await getSchedulesDueNow()
+    const results: Record<string, unknown> = {}
+    for (const schedule of dueSchedules) {
+      const result = await executeSchedule(schedule as ScanSchedule)
+      await updateScheduleAfterRun(schedule.id, 'success', result.summary)
+      results[schedule.name] = result
+    }
+
+    return NextResponse.json({ ok: true, schedules_run: dueSchedules.map(s => s.name), results })
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error'
-    console.error('[cron:route]', message)
-    return NextResponse.json({ error: message }, { status: 500 })
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Unknown' }, { status: 500 })
   }
 }
