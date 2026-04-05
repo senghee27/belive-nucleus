@@ -10,6 +10,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/coo': 'COO Agent',
   '/cto': 'CTO Agent',
   '/memory': 'Agent Memory',
+  '/settings': 'Settings',
 }
 
 export function Header() {
