@@ -3,8 +3,20 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { X, ArrowUp, CheckCircle, Send } from 'lucide-react'
-import type { Issue } from '@/lib/issues'
-import { CLUSTER_COLORS } from '@/lib/issues'
+type Issue = {
+  id: string; created_at: string; cluster: string; chat_id: string; title: string
+  severity: string; status: string; priority: string; owner_name: string | null
+  days_open: number; escalation_due_at: string | null; escalated: boolean
+  follow_up_count: number; last_follow_up_at: string | null; notes: string | null
+  source_message_id: string | null; cluster_color: string | null
+  owner_open_id: string | null; resolved_at: string | null; resolved_by: string | null
+  decision_id: string | null; last_activity: string | null; updated_at: string
+}
+
+const CLUSTER_COLORS: Record<string, string> = {
+  C1: '#F2784B', C2: '#9B6DFF', C3: '#4BB8F2', C4: '#4BF2A2', C5: '#E8A838',
+  C6: '#F27BAD', C7: '#6DD5F2', C8: '#B46DF2', C9: '#F2C96D', C10: '#6DF2B4', C11: '#E05252',
+}
 import { formatDistanceToNow } from 'date-fns'
 
 const SEV_COLORS: Record<string, string> = { RED: '#E05252', YELLOW: '#E8A838', GREEN: '#4BF2A2' }
