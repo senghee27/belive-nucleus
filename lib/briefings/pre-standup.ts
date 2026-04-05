@@ -86,12 +86,11 @@ export async function sendMorningBriefs(targetClusters?: string[], testChatId?: 
       const sendTo = getSafeChatId(testChatId ?? chat_id, 'chat_id')
       const { cardJson, textSummary } = await generateClusterBrief(cluster, sendTo)
 
-      // Send as interactive card — try user token (Lee) first, fall back to bot
+      // Send as interactive card — ONLY as Lee, NO bot fallback
       let sent = false
       let messageId: string | null = null
       const cardContent = JSON.stringify(cardJson)
 
-      // Try user token first (sends as Lee)
       try {
         const { getLeeUserToken } = await import('@/lib/lark-tokens')
         const userToken = await getLeeUserToken()
@@ -101,25 +100,11 @@ export async function sendMorningBriefs(targetClusters?: string[], testChatId?: 
           body: JSON.stringify({ receive_id: sendTo, msg_type: 'interactive', content: cardContent }),
         })
         const userData = await userRes.json()
-        if (userData.code === 0) {
-          sent = true
-          messageId = userData.data?.message_id ?? null
-          console.log(`[brief:${cluster}]`, 'Sent as Lee')
-        }
-      } catch { /* fall back to bot */ }
-
-      // Fall back to bot token
-      if (!sent) {
-        const botToken = await getLarkToken()
-        const botRes = await fetch('https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=chat_id', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${botToken}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ receive_id: sendTo, msg_type: 'interactive', content: cardContent }),
-        })
-        const botData = await botRes.json()
-        sent = botData.code === 0
-        messageId = botData.data?.message_id ?? null
-        if (sent) console.log(`[brief:${cluster}]`, 'Sent as bot (fallback)')
+        sent = userData.code === 0
+        messageId = userData.data?.message_id ?? null
+        if (!sent) console.error(`[brief:${cluster}]`, `Failed as Lee: ${userData.code} ${userData.msg}`)
+      } catch (error) {
+        console.error(`[brief:${cluster}]`, `Token error: ${error instanceof Error ? error.message : 'Unknown'}. Re-login needed.`)
       }
 
       // Upsert standup session

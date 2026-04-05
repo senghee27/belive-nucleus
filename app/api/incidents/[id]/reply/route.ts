@@ -34,12 +34,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       larkContent = larkContent.replace(nameRegex, `<at user_id="${m.openId}">${firstName}</at>`)
     }
 
-    // Get user token (send as Lee)
+    // Get user token (send as Lee ONLY — no bot fallback)
     let token: string
     try {
       token = await getLeeUserToken()
-    } catch {
-      token = await getLarkToken()
+    } catch (error) {
+      return NextResponse.json({
+        error: 'Lee\'s Lark token expired. Please re-login at /auth/login to refresh.',
+        token_expired: true,
+      }, { status: 401 })
     }
 
     const safeChatId = getSafeChatId(incident.chat_id, 'chat_id')

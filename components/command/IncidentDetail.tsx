@@ -63,10 +63,12 @@ export function IncidentDetail({ incident, onDecide, onResolve, loading }: Props
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       }).then(r => r.json())
       if (d.ok) {
-        toast.success(d.thread_reply ? '✓ Sent in thread' : '✓ Sent to group')
+        toast.success(d.thread_reply ? '✓ Sent in thread as Lee' : '✓ Sent to group as Lee')
         setSent(true); setReplyText('')
         if (useProposed) onDecide(incident.id, 'approved')
-      } else { toast.error(d.error ?? 'Failed') }
+      } else if (d.token_expired) {
+        toast.error('Token expired — please logout and re-login to refresh', { duration: 10000 })
+      } else { toast.error(d.error ?? 'Failed to send') }
     } catch { toast.error('Failed to send') }
     finally { setSending(false) }
   }

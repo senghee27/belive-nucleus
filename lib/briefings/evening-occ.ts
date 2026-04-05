@@ -75,7 +75,7 @@ export async function sendEveningOCCs(targetClusters?: string[], testChatId?: st
       const sendTo = getSafeChatId(testChatId ?? chat_id, 'chat_id')
       const { cardJson, textSummary } = await generateOCCCard(cluster, sendTo)
 
-      // Try user token first (sends as Lee), fall back to bot
+      // Send as Lee ONLY — NO bot fallback
       let resData: Record<string, unknown> = {}
       const cardContent = JSON.stringify(cardJson)
 
@@ -88,17 +88,9 @@ export async function sendEveningOCCs(targetClusters?: string[], testChatId?: st
           body: JSON.stringify({ receive_id: sendTo, msg_type: 'interactive', content: cardContent }),
         })
         resData = await userRes.json()
-        if (resData.code === 0) console.log(`[occ:${cluster}]`, 'Sent as Lee')
-      } catch { /* fall back */ }
-
-      if (resData.code !== 0) {
-        const botToken = await getLarkToken()
-        const botRes = await fetch('https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=chat_id', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${botToken}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ receive_id: sendTo, msg_type: 'interactive', content: cardContent }),
-        })
-        resData = await botRes.json()
+        if (resData.code !== 0) console.error(`[occ:${cluster}]`, `Failed as Lee: ${resData.code} ${resData.msg}`)
+      } catch (error) {
+        console.error(`[occ:${cluster}]`, `Token error: ${error instanceof Error ? error.message : 'Unknown'}. Re-login needed.`)
       }
       const sent = resData.code === 0
 
