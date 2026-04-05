@@ -49,21 +49,46 @@ export async function getLarkToken(): Promise<string> {
 }
 
 export async function sendLarkMessage(chatId: string, message: string, receiveIdType = 'chat_id'): Promise<boolean> {
+  const safeChatId = getSafeChatId(chatId, receiveIdType)
+
+  // Try sending as Lee (user token) first, fall back to bot
+  const tokens: { token: string; label: string }[] = []
+
+  // Try user token (sends as Lee)
   try {
-    const safeChatId = getSafeChatId(chatId, receiveIdType)
-    const token = await getLarkToken()
-    const res = await fetch(`${LARK_API_BASE}/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ receive_id: safeChatId, msg_type: 'text', content: JSON.stringify({ text: message }) }),
-    })
-    const data = await res.json()
-    if (data.code !== 0) { console.error('[lark:send]', `${data.code}: ${data.msg}`); return false }
-    return true
-  } catch (error) {
-    console.error('[lark:send]', error instanceof Error ? error.message : 'Unknown')
-    return false
+    const { getLeeUserToken } = await import('./lark-tokens')
+    const userToken = await getLeeUserToken()
+    tokens.push({ token: userToken, label: 'user (Lee)' })
+  } catch {
+    // No user token available
   }
+
+  // Always add bot token as fallback
+  try {
+    const botToken = await getLarkToken()
+    tokens.push({ token: botToken, label: 'bot' })
+  } catch { /* no bot token */ }
+
+  for (const { token, label } of tokens) {
+    try {
+      const res = await fetch(`${LARK_API_BASE}/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ receive_id: safeChatId, msg_type: 'text', content: JSON.stringify({ text: message }) }),
+      })
+      const data = await res.json()
+      if (data.code === 0) {
+        console.log(`[lark:send]`, `Sent as ${label}`)
+        return true
+      }
+      console.warn(`[lark:send]`, `${label} failed: ${data.code} ${data.msg}`)
+    } catch (error) {
+      console.warn(`[lark:send]`, `${label} error: ${error instanceof Error ? error.message : 'Unknown'}`)
+    }
+  }
+
+  console.error('[lark:send]', 'All tokens failed')
+  return false
 }
 
 // Export for other modules that send cards directly

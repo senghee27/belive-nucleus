@@ -75,26 +75,44 @@ export async function sendEveningOCCs(targetClusters?: string[], testChatId?: st
       const sendTo = getSafeChatId(testChatId ?? chat_id, 'chat_id')
       const { cardJson, textSummary } = await generateOCCCard(cluster, sendTo)
 
-      const token = await getLarkToken()
-      const res = await fetch('https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=chat_id', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ receive_id: sendTo, msg_type: 'interactive', content: JSON.stringify(cardJson) }),
-      })
-      const resData = await res.json()
+      // Try user token first (sends as Lee), fall back to bot
+      let resData: Record<string, unknown> = {}
+      const cardContent = JSON.stringify(cardJson)
+
+      try {
+        const { getLeeUserToken } = await import('@/lib/lark-tokens')
+        const userToken = await getLeeUserToken()
+        const userRes = await fetch('https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=chat_id', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${userToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ receive_id: sendTo, msg_type: 'interactive', content: cardContent }),
+        })
+        resData = await userRes.json()
+        if (resData.code === 0) console.log(`[occ:${cluster}]`, 'Sent as Lee')
+      } catch { /* fall back */ }
+
+      if (resData.code !== 0) {
+        const botToken = await getLarkToken()
+        const botRes = await fetch('https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=chat_id', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${botToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ receive_id: sendTo, msg_type: 'interactive', content: cardContent }),
+        })
+        resData = await botRes.json()
+      }
       const sent = resData.code === 0
 
       await supabaseAdmin.from('standup_sessions').upsert({
         session_date: today, cluster, chat_id: sendTo,
         occ_sent: sent, occ_sent_at: sent ? new Date().toISOString() : null,
-        occ_card_json: cardJson, occ_lark_message_id: resData.data?.message_id,
+        occ_card_json: cardJson, occ_lark_message_id: (resData as Record<string, Record<string, string>>).data?.message_id,
       }, { onConflict: 'session_date,cluster' })
 
       await supabaseAdmin.from('daily_messages').insert({
         cluster, session_date: today, message_type: 'evening_occ',
         direction: 'outbound', content_text: textSummary,
         content_card_json: cardJson, sender_name: 'Nucleus',
-        lark_message_id: resData.data?.message_id, sent_at: new Date().toISOString(),
+        lark_message_id: (resData as Record<string, Record<string, string>>).data?.message_id, sent_at: new Date().toISOString(),
       })
 
       await supabaseAdmin.from('cluster_health_cache').update({ occ_sent_today: true }).eq('cluster', cluster)
