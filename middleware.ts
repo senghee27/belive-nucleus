@@ -17,6 +17,7 @@ const SECRET_ROUTES = [
   '/api/incidents/escalate',
   '/api/scan-logs',
   '/api/tickets',
+  '/api/staff/sync',
 ]
 
 export async function middleware(request: NextRequest) {
