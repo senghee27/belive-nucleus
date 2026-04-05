@@ -38,6 +38,7 @@ export type Decision = {
   auto_executed: boolean
   sent_at: string | null
   outcome: string | null
+  lark_issue_id: string | null
 }
 
 export type AgentMemory = {

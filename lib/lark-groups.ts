@@ -8,6 +8,29 @@ import Anthropic from '@anthropic-ai/sdk'
 const LARK_API = 'https://open.larksuite.com'
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
+// Name cache to avoid repeated API calls
+const nameCache = new Map<string, string>()
+
+async function getSenderName(openId: string): Promise<string> {
+  if (!openId || openId === '') return 'Unknown'
+  if (nameCache.has(openId)) return nameCache.get(openId)!
+
+  try {
+    const token = await getTenantToken()
+    const res = await fetch(
+      `${LARK_API}/open-apis/contact/v3/users/${openId}?user_id_type=open_id`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    )
+    const data = await res.json()
+    const name = data.data?.user?.name ?? openId
+    nameCache.set(openId, name)
+    return name
+  } catch {
+    nameCache.set(openId, openId)
+    return openId
+  }
+}
+
 type ParsedMessage = {
   message_id: string
   sender_name: string | null
@@ -100,10 +123,11 @@ export async function readGroupMessages(
       if (!content.trim()) continue
 
       const senderOpenId = item.sender?.id ?? null
+      const senderName = senderOpenId ? await getSenderName(senderOpenId) : null
 
       const msg: ParsedMessage = {
         message_id: messageId,
-        sender_name: senderOpenId,
+        sender_name: senderName,
         sender_open_id: senderOpenId,
         content,
         message_time: new Date(createTime).toISOString(),
@@ -141,16 +165,48 @@ export async function detectIssues(
 
   for (const msg of messages) {
     try {
-      const contextLine = groupContext ? `\nGroup context: ${groupContext}\nUse this context to better understand who the people in this group are and what issues are relevant.` : ''
+      // Skip very short messages (ok, noted, thumbs up, etc.)
+      if (msg.content.trim().length < 20) {
+        await supabaseAdmin.from('lark_group_messages')
+          .update({ processed: true, issue_detected: false })
+          .eq('message_id', msg.message_id)
+        continue
+      }
+
+      // BUG 1 FIX: Dedup — skip if source_message_id already has an issue
+      const { data: existingIssue } = await supabaseAdmin
+        .from('lark_issues')
+        .select('id')
+        .eq('source_message_id', msg.message_id)
+        .single()
+
+      if (existingIssue) {
+        await supabaseAdmin.from('lark_group_messages')
+          .update({ processed: true, issue_detected: true })
+          .eq('message_id', msg.message_id)
+        continue
+      }
+
+      const contextLine = groupContext ? `\nGroup context: ${groupContext}` : ''
       const result = await client.messages.create({
         model: 'claude-sonnet-4-6',
         max_tokens: 200,
         system: `You analyze BeLive Property Hub Lark messages for operational issues.
 BeLive context: co-living operator, 3000+ rooms, 55+ condos, 11 clusters, Malaysia.${contextLine}
-Classify if this message indicates: maintenance issue, tenant complaint, ops emergency, staff problem, or no issue.
+
+RULES:
+- One message creates AT MOST one issue
+- If message mentions multiple problems, pick the MOST SEVERE one
+- Issue title MUST be specific: include unit number, property name, problem type
+  GOOD: "Pipe burst Unit 11-01 EPIC — flooding Level 3"
+  BAD: "Flooding risk and eviction notice"
+- Short replies (ok, noted, will do, thumbs up, acknowledged) are NOT issues → return is_issue: false
+- Casual conversation is NOT an issue
+- Only flag genuine operational problems that need action
+
 Respond ONLY in valid JSON. No markdown, no backticks.
-Format: {"is_issue":true,"severity":"RED","title":"short title","owner_name":"person name or null","issue_type":"maintenance|complaint|emergency|staff|null"}`,
-        messages: [{ role: 'user', content: `Cluster: ${cluster}\nMessage: ${msg.content}` }],
+Format: {"is_issue":true,"severity":"RED","title":"specific title with unit number","owner_name":"real person name or null","issue_type":"maintenance|complaint|emergency|staff|null"}`,
+        messages: [{ role: 'user', content: `Cluster: ${cluster}\nSender: ${msg.sender_name ?? 'Unknown'}\nMessage: ${msg.content}` }],
       })
 
       const text = result.content[0].type === 'text' ? result.content[0].text : '{}'
@@ -162,7 +218,7 @@ Format: {"is_issue":true,"severity":"RED","title":"short title","owner_name":"pe
           const severity = parsed.severity ?? 'YELLOW'
           const priority = severity === 'RED' ? 'P1' : severity === 'YELLOW' ? 'P2' : 'P3'
           const escalationHours = priority === 'P1' ? 2 : priority === 'P2' ? 24 : 48
-          // Look up chat_id from monitored_groups or use message_id as fallback
+
           const { data: groupData } = await supabaseAdmin
             .from('monitored_groups')
             .select('chat_id')
@@ -170,18 +226,45 @@ Format: {"is_issue":true,"severity":"RED","title":"short title","owner_name":"pe
             .single()
           const chatIdForIssue = groupData?.chat_id ?? msg.message_id
 
-          const { data: newIssue } = await supabaseAdmin.from('lark_issues').insert({
+          // Use real sender name as owner if AI didn't specify one
+          const ownerName = parsed.owner_name && parsed.owner_name !== 'null' && !parsed.owner_name.startsWith('_user')
+            ? parsed.owner_name
+            : msg.sender_name
+
+          const { data: newIssue, error: insertError } = await supabaseAdmin.from('lark_issues').insert({
             cluster,
             chat_id: chatIdForIssue,
             title: parsed.title,
             severity,
             priority,
-            owner_name: parsed.owner_name,
+            owner_name: ownerName,
             source_message_id: msg.message_id,
             last_activity: msg.message_time,
             escalation_due_at: new Date(Date.now() + escalationHours * 60 * 60 * 1000).toISOString(),
             cluster_color: CLUSTER_COLORS[cluster] ?? '#4B5A7A',
           }).select().single()
+
+          // Skip if duplicate (unique constraint violation)
+          if (insertError) {
+            console.log(`[lark:detectIssues:${cluster}]`, `Dedup: ${insertError.message}`)
+            continue
+          }
+
+          // BUG 3 FIX: Create a pending decision so Lee sees it in inbox
+          if (newIssue) {
+            await supabaseAdmin.from('decisions').insert({
+              source: 'lark',
+              agent: 'coo',
+              problem_type: parsed.issue_type ?? 'ops_maintenance',
+              priority,
+              ai_summary: `[${cluster}] ${parsed.title}`,
+              ai_proposal: `Issue detected in ${cluster}: ${parsed.title}. ${ownerName ? ownerName + ' should' : 'Team should'} follow up immediately.`,
+              ai_reasoning: `Detected from cluster group scan. Sender: ${msg.sender_name ?? 'Unknown'}. Original message: "${msg.content.slice(0, 200)}"`,
+              ai_confidence: 70,
+              status: 'pending',
+              lark_issue_id: newIssue.id,
+            })
+          }
 
           // P1 immediate alert to Lee
           if (priority === 'P1' && newIssue) {
@@ -193,15 +276,13 @@ Format: {"is_issue":true,"severity":"RED","title":"short title","owner_name":"pe
           issues.push({
             title: parsed.title,
             severity: parsed.severity,
-            owner_name: parsed.owner_name,
+            owner_name: ownerName,
             issue_type: parsed.issue_type,
             source_message_id: msg.message_id,
           })
         }
 
-        // Mark message as processed
-        await supabaseAdmin
-          .from('lark_group_messages')
+        await supabaseAdmin.from('lark_group_messages')
           .update({ processed: true, issue_detected: parsed.is_issue })
           .eq('message_id', msg.message_id)
       } catch {

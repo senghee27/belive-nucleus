@@ -155,6 +155,20 @@ export async function resolveIssue(issueId: string, resolvedBy: string): Promise
       .from('lark_issues')
       .update({ status: 'resolved', resolved_at: new Date().toISOString(), resolved_by: resolvedBy })
       .eq('id', issueId)
+
+    // Sync linked decision
+    const { data: linkedDecision } = await supabaseAdmin
+      .from('decisions')
+      .select('id')
+      .eq('lark_issue_id', issueId)
+      .single()
+
+    if (linkedDecision) {
+      await supabaseAdmin
+        .from('decisions')
+        .update({ outcome: 'resolved' })
+        .eq('id', linkedDecision.id)
+    }
   } catch (error) {
     console.error('[issues:resolve]', error instanceof Error ? error.message : 'Unknown')
   }

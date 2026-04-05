@@ -119,6 +119,23 @@ export async function POST(
       console.log('[approve:memory]', `${decision.agent}/${decision.problem_type}: ${newApproved}/${newTotal} = ${newRate}%`)
     }
 
+    // BUG 4 FIX: Sync linked issue
+    if (decision.lark_issue_id) {
+      if (status === 'rejected') {
+        await supabaseAdmin
+          .from('lark_issues')
+          .update({ notes: 'Lee overrode this issue classification' })
+          .eq('id', decision.lark_issue_id)
+      }
+      // If approved and reply sent, add note to issue
+      if (isApproved && final_reply) {
+        await supabaseAdmin
+          .from('lark_issues')
+          .update({ notes: `Lee approved action: ${final_reply.slice(0, 200)}` })
+          .eq('id', decision.lark_issue_id)
+      }
+    }
+
     return NextResponse.json({ ok: true, status })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error'
