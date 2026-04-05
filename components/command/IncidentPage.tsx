@@ -96,11 +96,17 @@ export function IncidentPage({ incident: initial, timeline: initialTimeline }: {
 
         {/* Action buttons */}
         <div className="flex items-center gap-2">
-          {larkDeepLink && (
+          {larkDeepLink ? (
             <a href={larkDeepLink} target="_blank" rel="noopener noreferrer"
-              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#111D30] text-[10px] text-[#8A9BB8] hover:text-[#E8EEF8] transition-colors">
-              <ExternalLink size={11} /> View in Lark
+              title="Opens original message in Lark"
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#111D30] text-[10px] text-[#8A9BB8] hover:text-[#F2784B] hover:bg-[#F2784B]/10 transition-colors">
+              <ExternalLink size={11} /> 🔗 View in Lark
             </a>
+          ) : (
+            <span title="Source message unavailable"
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#111D30] text-[10px] text-[#2A3550] cursor-not-allowed opacity-50">
+              <ExternalLink size={11} /> 🔗 View in Lark
+            </span>
           )}
           <button onClick={() => { fetch(`/api/incidents/${incident.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ severity: incident.severity === 'GREEN' ? 'YELLOW' : 'RED' }) }); toast.success('Escalated') }}
             className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#E8A838]/10 text-[10px] text-[#E8A838] hover:bg-[#E8A838]/20">
