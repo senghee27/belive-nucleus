@@ -48,15 +48,13 @@ export async function generateClusterBrief(cluster: string, chatId: string): Pro
 
   // Build Lark v7 card
   const cardJson = {
-    schema: '2.0',
     config: { wide_screen_mode: true },
     header: {
       template: CLUSTER_HEADER_COLORS[cluster] ?? 'blue',
       title: { tag: 'plain_text', content: `📊 ${cluster} — ${CLUSTER_NAMES[cluster]} | Pre-Standup Brief` },
-      subtitle: { tag: 'plain_text', content: `${today} · IOE: ${IOE_MAP[cluster]} · ${ticketData.length} tickets` },
     },
     elements: [
-      { tag: 'markdown', content: `**Tickets:** ${ticketData.length} total · ${overdueCount} overdue · ${maintCount} maintenance` },
+      { tag: 'markdown', content: `${today} · IOE: ${IOE_MAP[cluster]} · **${ticketData.length}** tickets · **${overdueCount}** overdue` },
       { tag: 'hr' },
       { tag: 'markdown', content: briefText },
       { tag: 'hr' },

@@ -41,12 +41,10 @@ export async function generateOCCCard(cluster: string, chatId: string): Promise<
   const dateStr = new Date().toLocaleDateString('en-MY', { weekday: 'long', day: 'numeric', month: 'short' })
 
   const cardJson = {
-    schema: '2.0',
     config: { wide_screen_mode: true },
     header: {
       template: CLUSTER_HEADER_COLORS[cluster] ?? 'blue',
       title: { tag: 'plain_text', content: `🌙 ${cluster} — ${CLUSTER_NAMES[cluster]} | OCC Nightly Review` },
-      subtitle: { tag: 'plain_text', content: dateStr },
     },
     elements: [
       { tag: 'markdown', content: occText },
