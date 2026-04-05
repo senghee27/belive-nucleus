@@ -35,6 +35,13 @@ export type Issue = {
   resolved_at: string | null
   resolved_by: string | null
   cluster_color: string | null
+  thread_keywords: string[] | null
+  last_message_at: string | null
+  silence_hours: number | null
+  ai_summary: string | null
+  ai_summary_at: string | null
+  message_count: number
+  has_lee_replied: boolean
 }
 
 export type IssueStats = {

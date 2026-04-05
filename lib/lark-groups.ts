@@ -285,11 +285,17 @@ export async function sendGroupMessage(
 }
 
 export async function scanTestClusters() {
+  const { processNewMessages, checkSilenceGaps } = await import('@/lib/issue-thread')
   const results: Record<string, { newMessages: number; issues: number }> = {}
 
   for (const [cluster, chatId] of Object.entries(TEST_CLUSTERS)) {
     const messages = await readGroupMessages(cluster, chatId)
+    // Link messages to existing issues first
+    await processNewMessages(messages, cluster)
+    // Detect new issues from unmatched messages
     const issues = await detectIssues(messages, cluster)
+    // Check silence gaps
+    await checkSilenceGaps(cluster)
     results[cluster] = { newMessages: messages.length, issues: issues.length }
   }
 

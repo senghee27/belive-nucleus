@@ -14,6 +14,8 @@ type Issue = {
   source_message_id: string | null; cluster_color: string | null
   owner_open_id: string | null; resolved_at: string | null; resolved_by: string | null
   decision_id: string | null; last_activity: string | null; updated_at: string
+  silence_hours?: number | null; message_count?: number; has_lee_replied?: boolean
+  ai_summary?: string | null; ai_summary_at?: string | null; thread_keywords?: string[] | null
 }
 
 type IssueStats = {
@@ -200,9 +202,15 @@ export function IssuesDashboard({ initialIssues, initialStats }: { initialIssues
                         <span className="text-xs text-[#8A9BB8]">{issue.owner_name ?? 'Unassigned'}</span>
                       </td>
                       <td className="p-3">
-                        <span className={`text-[11px] font-[family-name:var(--font-jetbrains-mono)] ${isOverdue ? 'text-[#E05252]' : 'text-[#4B5A7A]'}`}>
-                          {formatDistanceToNow(new Date(issue.created_at), { addSuffix: false })}
-                        </span>
+                        {issue.silence_hours && issue.silence_hours > (issue.priority === 'P1' ? 1 : issue.priority === 'P2' ? 3 : 6) ? (
+                          <span className="text-[11px] font-[family-name:var(--font-jetbrains-mono)] text-[#E8A838]">
+                            ⏸ {Math.round(issue.silence_hours)}h
+                          </span>
+                        ) : (
+                          <span className={`text-[11px] font-[family-name:var(--font-jetbrains-mono)] ${isOverdue ? 'text-[#E05252]' : 'text-[#4B5A7A]'}`}>
+                            {formatDistanceToNow(new Date(issue.created_at), { addSuffix: false })}
+                          </span>
+                        )}
                       </td>
                       <td className="p-3">
                         <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full"
