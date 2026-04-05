@@ -12,8 +12,8 @@ const PUBLIC_ROUTES = [
 const SECRET_ROUTES = [
   '/api/lark/scan',
   '/api/clusters/compute',
-  '/api/briefings/',
-  '/api/schedules/',
+  '/api/briefings',
+  '/api/schedules',
   '/api/incidents/escalate',
   '/api/scan-logs',
   '/api/tickets',
