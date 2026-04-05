@@ -174,6 +174,24 @@ export function ClusterDetailPanel({ cluster: c, color, onClose }: { cluster: Cl
   )
 }
 
+function ExpandableText({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const isLong = text.length > 200
+
+  return (
+    <div>
+      <p className={`text-[10px] text-[#E8EEF8] leading-relaxed whitespace-pre-wrap ${!expanded && isLong ? 'line-clamp-4' : ''}`}>
+        {expanded ? text : isLong ? text.slice(0, 300) + '...' : text}
+      </p>
+      {isLong && (
+        <button onClick={() => setExpanded(!expanded)} className="text-[9px] text-[#F2784B] mt-1 hover:underline">
+          {expanded ? 'Show less' : 'Show full message'}
+        </button>
+      )}
+    </div>
+  )
+}
+
 function DailyLogTab({ cluster, compliance }: { cluster: string; compliance: string }) {
   const [messages, setMessages] = useState<DailyMessage[]>([])
   const [dateOffset, setDateOffset] = useState(0)
@@ -253,12 +271,7 @@ function DailyLogTab({ cluster, compliance }: { cluster: string; compliance: str
                     {(msg.metadata as Record<string, unknown> | null)?.confidence ? ` · Confidence: ${String((msg.metadata as Record<string, unknown>).confidence)}%` : ''}
                   </p>
                 )}
-                <p className="text-[10px] text-[#E8EEF8] leading-relaxed whitespace-pre-wrap line-clamp-6">
-                  {msg.content_text?.slice(0, 500)}
-                </p>
-                {msg.content_text && msg.content_text.length > 500 && (
-                  <button className="text-[9px] text-[#F2784B] mt-1">Show more...</button>
-                )}
+                <ExpandableText text={msg.content_text ?? ''} />
 
                 {/* Show extracted data for standup reports */}
                 {msg.message_type === 'standup_report' && msg.metadata && typeof msg.metadata === 'object' && 'extracted' in msg.metadata && (
