@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
 import { CheckCircle, XCircle, RefreshCw, Send, Scan } from 'lucide-react'
@@ -19,6 +19,14 @@ type ScanResult = {
 }
 
 export default function SettingsPage() {
+  return (
+    <Suspense fallback={<div className="text-[#4B5A7A] text-sm p-4">Loading settings...</div>}>
+      <SettingsContent />
+    </Suspense>
+  )
+}
+
+function SettingsContent() {
   const searchParams = useSearchParams()
   const [status, setStatus] = useState<TokenStatus | null>(null)
   const [scanning, setScanning] = useState(false)
