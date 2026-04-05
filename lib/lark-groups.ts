@@ -48,10 +48,10 @@ export async function readGroupMessages(
 ): Promise<ParsedMessage[]> {
   try {
     const token = await getTenantToken()
-    const startTime = Math.floor((Date.now() - hoursBack * 60 * 60 * 1000) / 1000).toString()
 
+    // Fetch messages — no start_time filter to get recent messages
     const res = await fetch(
-      `${LARK_API}/open-apis/im/v1/messages?container_id_type=chat&container_id=${chatId}&page_size=50&sort_type=ByCreateTimeDesc&start_time=${startTime}`,
+      `${LARK_API}/open-apis/im/v1/messages?container_id_type=chat&container_id=${chatId}&page_size=50&sort_type=ByCreateTimeDesc`,
       {
         headers: { Authorization: `Bearer ${token}` },
       }
@@ -67,9 +67,20 @@ export async function readGroupMessages(
     const items = data.data?.items ?? []
     const newMessages: ParsedMessage[] = []
 
+    // Only process messages from within hoursBack window
+    const cutoff = Date.now() - hoursBack * 60 * 60 * 1000
+
     for (const item of items) {
       const messageId = item.message_id as string
       if (!messageId) continue
+
+      // Skip system messages, images, media without text
+      const msgType = item.msg_type as string
+      if (msgType === 'system' || msgType === 'image' || msgType === 'media' || msgType === 'file') continue
+
+      // Check time window
+      const createTime = parseInt(item.create_time)
+      if (createTime < cutoff) continue
 
       // Check if already exists
       const { data: existing } = await supabaseAdmin
@@ -80,23 +91,39 @@ export async function readGroupMessages(
 
       if (existing) continue
 
-      // Parse content
+      // Parse content — handle text, post (rich text), interactive
       let content = ''
       try {
         const body = JSON.parse(item.body?.content ?? '{}')
-        content = body.text ?? ''
+        if (body.text) {
+          // Plain text — strip HTML tags
+          content = body.text.replace(/<[^>]*>/g, '').trim()
+        } else if (body.content) {
+          // Rich text (post) — extract text from nested structure
+          const texts: string[] = []
+          for (const line of body.content ?? []) {
+            for (const elem of line ?? []) {
+              if (elem.text) texts.push(elem.text)
+            }
+          }
+          content = texts.join(' ').trim()
+        } else if (body.title) {
+          content = body.title
+        }
       } catch {
         content = item.body?.content ?? ''
       }
 
       if (!content.trim()) continue
 
+      const senderOpenId = item.sender?.id ?? null
+
       const msg: ParsedMessage = {
         message_id: messageId,
-        sender_name: item.sender?.id ?? null,
-        sender_open_id: item.sender?.id ?? null,
+        sender_name: senderOpenId,
+        sender_open_id: senderOpenId,
         content,
-        message_time: new Date(parseInt(item.create_time) * 1000).toISOString(),
+        message_time: new Date(createTime).toISOString(),
       }
 
       // Insert into DB
