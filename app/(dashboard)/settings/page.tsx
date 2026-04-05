@@ -201,7 +201,10 @@ function SettingsContent() {
           ))}
         </div>
       </div>
-      {/* Section 4 — Scan Logs */}
+      {/* Section 4 — Staff Directory */}
+      <StaffDirectory />
+
+      {/* Section 5 — Scan Logs */}
       <ScanLogs />
     </div>
   )
@@ -243,6 +246,83 @@ function ScanLogs() {
                 </span>
                 <span className="text-[9px] text-[#2A3550]">
                   {new Date(log.created_at as string).toLocaleTimeString('en-MY')}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function StaffDirectory() {
+  const [staff, setStaff] = useState<Record<string, unknown>[]>([])
+  const [loading, setLoading] = useState(true)
+  const [syncing, setSyncing] = useState(false)
+
+  useEffect(() => { loadStaff() }, [])
+
+  function loadStaff() {
+    setLoading(true)
+    fetch('/api/staff')
+      .then(r => r.json())
+      .then(d => { if (d.ok) setStaff(d.staff ?? []) })
+      .finally(() => setLoading(false))
+  }
+
+  async function handleSync() {
+    setSyncing(true)
+    try {
+      const res = await fetch('/api/staff/sync', { headers: { 'x-nucleus-secret': 'belive_nucleus_2026' } })
+      const d = await res.json()
+      if (d.ok) {
+        toast.success(`Synced ${d.synced} staff members`)
+        loadStaff()
+      } else {
+        toast.error(d.error ?? 'Sync failed')
+      }
+    } catch {
+      toast.error('Sync failed')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  return (
+    <div className="bg-[#0D1525] border border-[#1A2035] rounded-xl p-6">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-sm font-medium text-[#E8EEF8]">Staff Directory</h3>
+          <p className="text-[10px] text-[#4B5A7A] mt-0.5">{staff.length} members synced from Lark</p>
+        </div>
+        <button onClick={handleSync} disabled={syncing}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#111D30] text-xs text-[#E8EEF8] hover:bg-[#162038] transition-colors disabled:opacity-50">
+          {syncing ? 'Syncing...' : '↻ Refresh from Lark'}
+        </button>
+      </div>
+
+      {loading ? (
+        <p className="text-xs text-[#4B5A7A]">Loading...</p>
+      ) : staff.length === 0 ? (
+        <p className="text-xs text-[#4B5A7A]">No staff synced yet. Click Refresh to sync from Lark.</p>
+      ) : (
+        <div className="space-y-1 max-h-[400px] overflow-y-auto">
+          {staff.map((s, i) => (
+            <div key={i} className="flex items-center justify-between py-1.5 border-b border-[#1A2035]/30 last:border-0">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-full bg-[#4B5A7A] flex items-center justify-center text-[8px] font-bold text-white shrink-0">
+                  {String(s.first_name ?? s.name ?? '?').slice(0, 2).toUpperCase()}
+                </div>
+                <div>
+                  <span className="text-xs text-[#E8EEF8]">{s.name as string}</span>
+                  {s.role ? <span className="text-[9px] text-[#4B5A7A] ml-2">{String(s.role)}</span> : null}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {s.cluster ? <span className="text-[9px] text-[#4B5A7A]">{String(s.cluster)}</span> : null}
+                <span className="text-[8px] text-[#2A3550] font-[family-name:var(--font-jetbrains-mono)]">
+                  {String(s.open_id ?? '').slice(0, 12)}...
                 </span>
               </div>
             </div>
