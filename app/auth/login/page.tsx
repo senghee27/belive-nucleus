@@ -1,8 +1,23 @@
-import Link from 'next/link'
-import { getLarkOAuthURL } from '@/lib/auth'
+'use client'
 
-export default function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string; redirect?: string }> }) {
-  const oauthUrl = getLarkOAuthURL('browser_login')
+import { useEffect } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { Suspense } from 'react'
+
+const OAUTH_URL = `https://open.larksuite.com/open-apis/authen/v1/authorize?app_id=cli_a95beb5592f8ded0&redirect_uri=${encodeURIComponent('https://belive-nucleus.vercel.app/api/auth/lark/callback')}&scope=im:message%20im:chat%20im:chat.members:read&response_type=code&state=browser_login`
+
+function LoginContent() {
+  const searchParams = useSearchParams()
+  const error = searchParams.get('error')
+
+  useEffect(() => {
+    // Detect if running inside Lark — auto-redirect to OAuth (no login button needed)
+    const ua = navigator.userAgent.toLowerCase()
+    const isLark = ua.includes('lark') || ua.includes('feishu')
+    if (isLark && !error) {
+      window.location.href = OAUTH_URL
+    }
+  }, [error])
 
   return (
     <div className="min-h-screen bg-[#080E1C] flex items-center justify-center p-4">
@@ -21,14 +36,20 @@ export default function LoginPage({ searchParams }: { searchParams: Promise<{ er
             <span className="text-sm font-medium text-[#E8EEF8]">Private System</span>
           </div>
 
+          {error && (
+            <p className="text-xs text-[#E05252] mb-4">
+              {error === 'no_code' ? 'Login failed. Please try again.' :
+               error === 'token_failed' ? 'Lark authentication failed.' :
+               'An error occurred. Please try again.'}
+            </p>
+          )}
+
           <p className="text-xs text-[#8A9BB8] mb-6">
             Login with your Lark account to access BeLive Nucleus.
           </p>
 
-          <a
-            href={oauthUrl}
-            className="flex items-center justify-center gap-2 w-full h-10 rounded-lg bg-[#F2784B] text-white text-sm font-medium hover:bg-[#E0673D] transition-colors"
-          >
+          <a href={OAUTH_URL}
+            className="flex items-center justify-center gap-2 w-full h-10 rounded-lg bg-[#F2784B] text-white text-sm font-medium hover:bg-[#E0673D] transition-colors">
             Login with Lark →
           </a>
         </div>
@@ -38,5 +59,17 @@ export default function LoginPage({ searchParams }: { searchParams: Promise<{ er
         </p>
       </div>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-[#080E1C] flex items-center justify-center">
+        <p className="text-[#4B5A7A] text-sm">Authenticating...</p>
+      </div>
+    }>
+      <LoginContent />
+    </Suspense>
   )
 }
