@@ -4,12 +4,11 @@ import { usePathname } from 'next/navigation'
 
 const PAGE_TITLES: Record<string, string> = {
   '/overview': 'Overview',
-  '/inbox': 'Decision Inbox',
+  '/command': 'Command Center',
   '/ceo': 'CEO Agent',
   '/cfo': 'CFO Agent',
   '/coo': 'COO Agent',
   '/cto': 'CTO Agent',
-  '/issues': 'Issues',
   '/groups': 'Groups',
   '/schedules': 'Scan Schedules',
   '/memory': 'Agent Memory',

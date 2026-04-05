@@ -1,7 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { readGroupMessages, detectIssues } from '@/lib/lark-groups'
 import { sendMorningBriefings } from '@/lib/briefings/morning'
-import { sendIssuesSummaryToLee } from '@/lib/briefings/issue-dm'
+import { scanEnabledGroups } from '@/lib/scanner'
 
 export type ScanSchedule = {
   id: string
@@ -149,30 +148,16 @@ export async function executeSchedule(schedule: ScanSchedule): Promise<ScheduleR
     result.groups_scanned = groups.length
 
     if (schedule.skill === 'morning_briefing') {
-      // Use existing morning briefing system
       const briefingResults = await sendMorningBriefings()
       result.briefings_sent = Object.values(briefingResults).filter(r => r.sent).length
       result.summary = `Sent ${result.briefings_sent} morning briefings`
     } else {
-      // Scan each group
-      for (const group of groups) {
-        const messages = await readGroupMessages(group.cluster, group.chat_id)
-        result.messages_read += messages.length
-
-        if (schedule.output_actions.includes('detect_issues')) {
-          const prompt = schedule.custom_prompt
-            ? `${group.context ?? ''}\n\nAdditional instructions: ${schedule.custom_prompt}`
-            : group.context ?? undefined
-          const issues = await detectIssues(messages, group.cluster, prompt)
-          result.issues_found += issues.length
-        }
-      }
-
-      result.summary = `Scanned ${result.groups_scanned} groups, ${result.messages_read} msgs, ${result.issues_found} issues`
-    }
-
-    if (schedule.output_actions.includes('dm_lee_summary') && (result.issues_found > 0 || result.briefings_sent > 0)) {
-      await sendIssuesSummaryToLee()
+      // Use unified scanner
+      const scanResult = await scanEnabledGroups()
+      result.groups_scanned = scanResult.groups_scanned
+      result.messages_read = scanResult.total_messages
+      result.issues_found = scanResult.total_incidents
+      result.summary = `Scanned ${result.groups_scanned} groups, ${result.messages_read} msgs, ${result.issues_found} incidents`
     }
 
     return result

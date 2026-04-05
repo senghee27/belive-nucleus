@@ -127,7 +127,7 @@ export function GroupsManager({ initialGroups }: { initialGroups: Group[] }) {
                 {group.scanning_enabled ? 'Pause' : 'Resume'}
               </button>
               <Link
-                href={`/issues?cluster=${group.cluster}`}
+                href={`/command?cluster=${group.cluster}`}
                 className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-[#8A9BB8] hover:bg-[#111D30] transition-colors"
               >
                 <ExternalLink size={10} /> Issues

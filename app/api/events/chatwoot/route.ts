@@ -1,102 +1,37 @@
-import { NextRequest, NextResponse, after } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase-admin'
+import { NextRequest, NextResponse } from 'next/server'
+import { after } from 'next/server'
+import { createIncident, analyseIncident, classifyMessage } from '@/lib/incidents'
 import { parseChatwootPayload } from '@/lib/chatwoot'
-import { classifyEvent } from '@/lib/agents/classify'
-import { proposeDecision } from '@/lib/agents/propose'
 
 async function processChatwootEvent(body: unknown) {
   try {
     const payload = parseChatwootPayload(body)
-    if (!payload) {
-      console.log('[chatwoot:parse]', 'Invalid payload, skipping')
-      return
-    }
+    if (!payload || payload.event !== 'message_created' || payload.message_type !== 'incoming') return
 
-    // Only process incoming messages
-    if (payload.event !== 'message_created') return
-    if (payload.message_type !== 'incoming') return
+    const classification = await classifyMessage(payload.content, 'chatwoot')
+    if (!classification.is_incident) return
 
-    const sourceId = `chatwoot_${payload.conversation_id}_${Date.now()}`
+    const incident = await createIncident({
+      source: 'chatwoot', source_message_id: `chatwoot_${payload.conversation_id}_${Date.now()}`,
+      chat_id: String(payload.conversation_id),
+      agent: classification.agent, problem_type: classification.problem_type,
+      priority: classification.priority, severity: classification.severity,
+      title: classification.title, raw_content: payload.content,
+      sender_name: payload.sender_name,
+    })
 
-    // Insert event
-    const { data: eventRow, error: insertError } = await supabaseAdmin
-      .from('events')
-      .insert({
-        source: 'chatwoot',
-        source_id: sourceId,
-        source_type: 'conversation',
-        sender_name: payload.sender_name,
-        sender_id: payload.sender_email,
-        chat_id: String(payload.conversation_id),
-        chat_name: `Account ${payload.account_id}`,
-        content: payload.content,
-        raw_payload: body as Record<string, unknown>,
-        processed: false,
-      })
-      .select()
-      .single()
-
-    if (insertError) throw new Error(insertError.message)
-
-    console.log('[chatwoot:event]', `Created event ${eventRow.id}`)
-
-    // Classify
-    const classification = await classifyEvent(payload.content, 'chatwoot')
-    console.log('[chatwoot:classify]', classification)
-
-    // Propose
-    const proposal = await proposeDecision(
-      payload.content,
-      classification.agent,
-      classification.problem_type,
-      'chatwoot'
-    )
-    console.log('[chatwoot:propose]', proposal)
-
-    // Insert decision
-    const { error: decisionError } = await supabaseAdmin
-      .from('decisions')
-      .insert({
-        event_id: eventRow.id,
-        source: 'chatwoot',
-        agent: classification.agent,
-        problem_type: classification.problem_type,
-        priority: classification.priority,
-        ai_summary: classification.summary,
-        ai_proposal: proposal.proposal,
-        ai_reasoning: proposal.reasoning,
-        ai_confidence: proposal.confidence,
-        status: 'pending',
-      })
-
-    if (decisionError) throw new Error(decisionError.message)
-
-    // Mark event as processed
-    await supabaseAdmin
-      .from('events')
-      .update({ processed: true })
-      .eq('id', eventRow.id)
-
-    console.log('[chatwoot:complete]', `Event ${eventRow.id} fully processed`)
+    if (incident) await analyseIncident(incident.id)
   } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Unknown error'
-    console.error('[chatwoot:process]', msg)
+    console.error('[chatwoot:process]', error instanceof Error ? error.message : 'Unknown')
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-
-    // Use after() to process in background after response is sent
-    after(async () => {
-      await processChatwootEvent(body)
-    })
-
+    after(async () => { await processChatwootEvent(body) })
     return NextResponse.json({ ok: true })
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error'
-    console.error('[chatwoot:route]', message)
+  } catch {
     return NextResponse.json({ ok: true })
   }
 }
