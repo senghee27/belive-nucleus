@@ -123,3 +123,13 @@ export type ClusterHealth = {
   brief_sent_today: boolean
   occ_sent_today: boolean
 }
+
+export type NucleusSession = {
+  open_id: string
+  name: string
+  role: 'admin' | 'viewer'
+  lark_access_token: string
+  lark_token_expires_at: number
+  session_expires_at: number
+  issued_at: number
+}
