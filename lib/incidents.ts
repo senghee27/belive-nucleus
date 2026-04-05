@@ -28,13 +28,24 @@ AGENTS: coo (ops/maintenance/tenant), cfo (finance), ceo (owner/people), cto (te
 SEVERITY: RED (emergency/safety/system down), YELLOW (needs attention), GREEN (routine)
 PRIORITY: P1 (act within 2h), P2 (act within 24h), P3 (within 48h)
 
+IMPORTANT — WHAT IS AN INCIDENT:
+- Any message reporting a problem, complaint, damage, malfunction, urgent request = IS an incident (is_incident: true)
+- Maintenance requests, water issues, AC problems, broken items = IS an incident
+- Tenant complaints, owner complaints, payment issues = IS an incident
+- Staff requesting help or escalating = IS an incident
+- Messages with "URGENT", unit numbers, ticket numbers = almost always an incident
+
+WHAT IS NOT AN INCIDENT:
+- Short replies ONLY (ok, noted, will do, 👍, <15 chars) → is_incident: false
+- Pure acknowledgements with no new information → is_incident: false
+- Greetings, thank you messages → is_incident: false
+
 RULES:
-- Short replies (ok, noted, will do, 👍, acknowledged, <15 chars) → is_incident: false
-- Casual chat, acknowledgements → is_incident: false
 - One message = AT MOST one issue. Pick the MOST SEVERE if multiple.
-- Title MUST include unit number AND property name AND problem type
-  GOOD: "Pipe burst Unit 11-01 EPIC — flooding Level 3"
-  BAD: "Multiple issues reported"
+- Title MUST include unit number AND property/cluster AND problem type
+  GOOD: "Water bill abnormally high RM800 — RC A1-21-09"
+  BAD: "Water issue reported"
+- When in doubt, classify as incident. Better to flag too many than miss a real one.
 
 Respond ONLY valid JSON:
 {"is_incident":true,"agent":"coo","problem_type":"ops_maintenance","priority":"P2","severity":"YELLOW","title":"specific title"}`,
