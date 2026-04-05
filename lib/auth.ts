@@ -9,6 +9,18 @@ const ALLOWED_USERS = [
     name: 'Lee Seng Hee',
     role: 'admin' as const,
   },
+  {
+    // Same user, different open_id from OAuth flow
+    open_id: 'ou_75d909e9970e145b53db019efefd09c9',
+    name: 'Lee Seng Hee',
+    role: 'admin' as const,
+  },
+  {
+    // Same user, open_id from lark-cli
+    open_id: 'ou_e5cdd533d4e22a987413ae5fa580d697',
+    name: 'Lee Seng Hee',
+    role: 'admin' as const,
+  },
 ]
 
 export async function createSessionJWT(session: NucleusSession): Promise<string> {
