@@ -216,37 +216,56 @@ export async function sendGroupMessage(
   content: string,
   asLee = true
 ): Promise<string | null> {
-  try {
-    const token = asLee ? await getLeeUserToken() : await getTenantToken()
+  // Try sending as Lee first, fall back to bot if it fails
+  const tokens: string[] = []
 
-    const res = await fetch(
-      `${LARK_API}/open-apis/im/v1/messages?receive_id_type=chat_id`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          receive_id: chatId,
-          msg_type: 'text',
-          content: JSON.stringify({ text: content }),
-        }),
-      }
-    )
-
-    const data = await res.json()
-
-    if (data.code !== 0) {
-      console.error('[lark:sendGroup]', `Error ${data.code}: ${data.msg}`)
-      return null
+  if (asLee) {
+    try {
+      tokens.push(await getLeeUserToken())
+    } catch {
+      console.warn('[lark:sendGroup]', 'User token unavailable, will use bot')
     }
-
-    return data.data?.message_id ?? null
-  } catch (error) {
-    console.error('[lark:sendGroup]', error instanceof Error ? error.message : 'Unknown')
-    return null
   }
+
+  // Always add tenant token as fallback
+  try {
+    tokens.push(await getTenantToken())
+  } catch {
+    console.error('[lark:sendGroup]', 'Tenant token also unavailable')
+  }
+
+  for (const token of tokens) {
+    try {
+      const res = await fetch(
+        `${LARK_API}/open-apis/im/v1/messages?receive_id_type=chat_id`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            receive_id: chatId,
+            msg_type: 'text',
+            content: JSON.stringify({ text: content }),
+          }),
+        }
+      )
+
+      const data = await res.json()
+
+      if (data.code === 0) {
+        return data.data?.message_id ?? null
+      }
+
+      console.warn('[lark:sendGroup]', `Token failed (${data.code}: ${data.msg}), trying next...`)
+    } catch (error) {
+      console.warn('[lark:sendGroup]', error instanceof Error ? error.message : 'Unknown')
+    }
+  }
+
+  console.error('[lark:sendGroup]', 'All tokens failed')
+  return null
 }
 
 export async function scanTestClusters() {

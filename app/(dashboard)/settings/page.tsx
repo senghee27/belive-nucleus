@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
 import { CheckCircle, XCircle, RefreshCw, Send, Scan } from 'lucide-react'
 
-const OAUTH_URL = `https://open.larksuite.com/open-apis/authen/v1/authorize?app_id=cli_a95beb5592f8ded0&redirect_uri=${encodeURIComponent('https://belive-nucleus.vercel.app/api/auth/lark/callback')}&scope=im:message%20im:message:send%20im:chat%20im:chat.members:read&response_type=code&state=nucleus`
+const OAUTH_URL = `https://open.larksuite.com/open-apis/authen/v1/authorize?app_id=cli_a95beb5592f8ded0&redirect_uri=${encodeURIComponent('https://belive-nucleus.vercel.app/api/auth/lark/callback')}&scope=im:message%20im:chat%20im:chat.members:read&response_type=code&state=nucleus`
 
 type TokenStatus = {
   connected: boolean
