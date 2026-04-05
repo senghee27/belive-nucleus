@@ -9,6 +9,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/cfo': 'CFO Agent',
   '/coo': 'COO Agent',
   '/cto': 'CTO Agent',
+  '/issues': 'Issues',
   '/memory': 'Agent Memory',
   '/settings': 'Settings',
 }

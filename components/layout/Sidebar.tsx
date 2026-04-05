@@ -11,6 +11,7 @@ import {
   Code,
   Brain,
   Wrench,
+  AlertTriangle,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
@@ -22,6 +23,7 @@ const NAV_ITEMS = [
   { href: '/cfo', icon: DollarSign, label: 'CFO', color: '#4BB8F2' },
   { href: '/coo', icon: Settings, label: 'COO', color: '#F2784B' },
   { href: '/cto', icon: Code, label: 'CTO', color: '#4BF2A2' },
+  { href: '/issues', icon: AlertTriangle, label: 'Issues', showRedBadge: true },
   { href: '/memory', icon: Brain, label: 'Memory' },
   { href: '/settings', icon: Wrench, label: 'Settings' },
 ]
@@ -29,22 +31,22 @@ const NAV_ITEMS = [
 export function Sidebar() {
   const pathname = usePathname()
   const [pendingCount, setPendingCount] = useState(0)
+  const [redCount, setRedCount] = useState(0)
 
   useEffect(() => {
-    supabase
-      .from('decisions')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'pending')
+    supabase.from('decisions').select('id', { count: 'exact', head: true }).eq('status', 'pending')
       .then(({ count }) => setPendingCount(count ?? 0))
+    supabase.from('lark_issues').select('id', { count: 'exact', head: true }).eq('status', 'open').eq('severity', 'RED')
+      .then(({ count }) => setRedCount(count ?? 0))
 
-    const channel = supabase
-      .channel('sidebar-pending')
+    const channel = supabase.channel('sidebar-counts')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'decisions' }, () => {
-        supabase
-          .from('decisions')
-          .select('id', { count: 'exact', head: true })
-          .eq('status', 'pending')
+        supabase.from('decisions').select('id', { count: 'exact', head: true }).eq('status', 'pending')
           .then(({ count }) => setPendingCount(count ?? 0))
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lark_issues' }, () => {
+        supabase.from('lark_issues').select('id', { count: 'exact', head: true }).eq('status', 'open').eq('severity', 'RED')
+          .then(({ count }) => setRedCount(count ?? 0))
       })
       .subscribe()
 
@@ -81,6 +83,11 @@ export function Sidebar() {
                 {item.showBadge && pendingCount > 0 && (
                   <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 flex items-center justify-center rounded-full bg-[#F2784B] text-white text-[9px] font-bold px-1">
                     {pendingCount}
+                  </span>
+                )}
+                {'showRedBadge' in item && item.showRedBadge && redCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 flex items-center justify-center rounded-full bg-[#E05252] text-white text-[9px] font-bold px-1 animate-pulse">
+                    {redCount}
                   </span>
                 )}
               </Link>

@@ -2,6 +2,7 @@
   "crons": [
     { "path": "/api/cron", "schedule": "30 0 * * 1-6" },
     { "path": "/api/cron", "schedule": "0 4 * * 1-6" },
-    { "path": "/api/cron", "schedule": "15 14 * * 1-6" }
+    { "path": "/api/cron", "schedule": "15 14 * * 1-6" },
+    { "path": "/api/cron", "schedule": "0 * * * *" }
   ]
 }

@@ -1,5 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getTenantToken, getLeeUserToken } from '@/lib/lark-tokens'
+import { sendP1AlertToLee } from '@/lib/briefings/issue-dm'
+import { CLUSTER_COLORS } from '@/lib/issues'
 import Anthropic from '@anthropic-ai/sdk'
 
 const LARK_API = 'https://open.larksuite.com'
@@ -174,16 +176,30 @@ Format: {"is_issue":true,"severity":"RED","title":"short title","owner_name":"pe
         const parsed = JSON.parse(text)
 
         if (parsed.is_issue) {
-          // Insert issue
-          await supabaseAdmin.from('lark_issues').insert({
+          const severity = parsed.severity ?? 'YELLOW'
+          const priority = severity === 'RED' ? 'P1' : severity === 'YELLOW' ? 'P2' : 'P3'
+          const escalationHours = priority === 'P1' ? 2 : priority === 'P2' ? 24 : 48
+          const chatIdForIssue = TEST_CLUSTERS[cluster as keyof typeof TEST_CLUSTERS] ?? msg.message_id
+
+          const { data: newIssue } = await supabaseAdmin.from('lark_issues').insert({
             cluster,
-            chat_id: msg.message_id,
+            chat_id: chatIdForIssue,
             title: parsed.title,
-            severity: parsed.severity ?? 'YELLOW',
+            severity,
+            priority,
             owner_name: parsed.owner_name,
             source_message_id: msg.message_id,
             last_activity: msg.message_time,
-          })
+            escalation_due_at: new Date(Date.now() + escalationHours * 60 * 60 * 1000).toISOString(),
+            cluster_color: CLUSTER_COLORS[cluster] ?? '#4B5A7A',
+          }).select().single()
+
+          // P1 immediate alert to Lee
+          if (priority === 'P1' && newIssue) {
+            sendP1AlertToLee({ ...newIssue, days_open: 0 }).catch(err =>
+              console.error('[lark:p1Alert]', err instanceof Error ? err.message : err)
+            )
+          }
 
           issues.push({
             title: parsed.title,

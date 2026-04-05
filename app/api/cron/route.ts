@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { scanTestClusters } from '@/lib/lark-groups'
 import { sendMorningBriefings } from '@/lib/briefings/morning'
+import { checkAndEscalateOverdueIssues } from '@/lib/issues'
+import { sendIssuesSummaryToLee } from '@/lib/briefings/issue-dm'
 
 function getTaskFromTime(): string {
   const utcHour = new Date().getUTCHours()
   if (utcHour === 0) return 'morning-briefing'
   if (utcHour === 4) return 'midday-scan'
   if (utcHour === 14) return 'evening-review'
-  return 'scan'
+  return 'check-escalations'
 }
 
 async function runTask(task: string) {
@@ -17,8 +19,19 @@ async function runTask(task: string) {
 
     case 'midday-scan':
     case 'evening-review':
-    case 'scan':
-      return { task, result: await scanTestClusters() }
+    case 'scan': {
+      const scanResult = await scanTestClusters()
+      const escalationResult = await checkAndEscalateOverdueIssues()
+      return { task, scan: scanResult, escalations: escalationResult }
+    }
+
+    case 'check-escalations': {
+      const result = await checkAndEscalateOverdueIssues()
+      if (result.escalated > 0) {
+        await sendIssuesSummaryToLee()
+      }
+      return { task, result }
+    }
 
     default:
       return { task, result: 'Unknown task' }
