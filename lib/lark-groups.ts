@@ -279,13 +279,48 @@ export async function scanEnabledGroups() {
   const results: Record<string, { newMessages: number; issues: number }> = {}
 
   for (const group of groups) {
-    const messages = await readGroupMessages(group.cluster, group.chat_id)
-    await processNewMessages(messages, group.cluster)
-    const issues = await detectIssues(messages, group.cluster, group.context ?? undefined)
-    await checkSilenceGaps(group.cluster)
-    await updateLastScanned(group.chat_id)
-    await incrementGroupStats(group.chat_id, messages.length, issues.length)
-    results[group.cluster] = { newMessages: messages.length, issues: issues.length }
+    const startTime = Date.now()
+    let scanStatus = 'success'
+    let errorMsg: string | null = null
+
+    try {
+      const messages = await readGroupMessages(group.cluster, group.chat_id)
+      await processNewMessages(messages, group.cluster)
+      const issues = await detectIssues(messages, group.cluster, group.context ?? undefined)
+      await checkSilenceGaps(group.cluster)
+      await updateLastScanned(group.chat_id)
+      await incrementGroupStats(group.chat_id, messages.length, issues.length)
+      results[group.cluster] = { newMessages: messages.length, issues: issues.length }
+
+      // Log scan
+      await supabaseAdmin.from('scan_logs').insert({
+        trigger_type: 'scheduled',
+        trigger_source: 'scanEnabledGroups',
+        cluster: group.cluster,
+        chat_id: group.chat_id,
+        group_name: group.group_name,
+        messages_found: messages.length,
+        new_messages: messages.length,
+        issues_detected: issues.length,
+        status: 'success',
+        duration_ms: Date.now() - startTime,
+      })
+    } catch (error) {
+      scanStatus = 'failed'
+      errorMsg = error instanceof Error ? error.message : 'Unknown'
+      results[group.cluster] = { newMessages: 0, issues: 0 }
+
+      await supabaseAdmin.from('scan_logs').insert({
+        trigger_type: 'scheduled',
+        trigger_source: 'scanEnabledGroups',
+        cluster: group.cluster,
+        chat_id: group.chat_id,
+        group_name: group.group_name,
+        status: scanStatus,
+        error_message: errorMsg,
+        duration_ms: Date.now() - startTime,
+      })
+    }
   }
 
   return { scannedAt: new Date().toISOString(), clusters: results }

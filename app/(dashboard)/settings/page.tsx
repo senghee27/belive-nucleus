@@ -197,6 +197,54 @@ function SettingsContent() {
           ))}
         </div>
       </div>
+      {/* Section 4 — Scan Logs */}
+      <ScanLogs />
+    </div>
+  )
+}
+
+function ScanLogs() {
+  const [logs, setLogs] = useState<Record<string, unknown>[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetch('/api/scan-logs')
+      .then(r => r.json())
+      .then(d => { if (d.ok) setLogs(d.logs) })
+      .finally(() => setLoading(false))
+  }, [])
+
+  return (
+    <div className="bg-[#0D1525] border border-[#1A2035] rounded-xl p-6">
+      <h3 className="text-sm font-medium text-[#E8EEF8] mb-4">Scan Logs</h3>
+      {loading ? (
+        <p className="text-xs text-[#4B5A7A]">Loading...</p>
+      ) : logs.length === 0 ? (
+        <p className="text-xs text-[#4B5A7A]">No scan logs yet. Run a scan to see activity.</p>
+      ) : (
+        <div className="space-y-2 max-h-[300px] overflow-y-auto">
+          {logs.map((log, i) => (
+            <div key={i} className="flex items-center justify-between py-1.5 border-b border-[#1A2035]/30 last:border-0">
+              <div className="flex items-center gap-2">
+                <span className={`w-1.5 h-1.5 rounded-full ${log.status === 'success' ? 'bg-[#4BF2A2]' : 'bg-[#E05252]'}`} />
+                <span className="text-xs text-[#8A9BB8]">{log.cluster as string}</span>
+                <span className="text-[10px] text-[#4B5A7A]">{log.group_name as string}</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-[10px] font-[family-name:var(--font-jetbrains-mono)] text-[#E8EEF8]">
+                  {log.new_messages as number} msgs, {log.issues_detected as number} issues
+                </span>
+                <span className="text-[9px] text-[#2A3550]">
+                  {log.duration_ms as number}ms
+                </span>
+                <span className="text-[9px] text-[#2A3550]">
+                  {new Date(log.created_at as string).toLocaleTimeString('en-MY')}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
