@@ -44,7 +44,7 @@ type DetectedIssue = {
 export async function readGroupMessages(
   cluster: string,
   chatId: string,
-  hoursBack = 14
+  hoursBack = 48
 ): Promise<ParsedMessage[]> {
   try {
     const token = await getTenantToken()
