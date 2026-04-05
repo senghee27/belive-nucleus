@@ -157,6 +157,13 @@ export async function createIncident(data: {
       content: data.raw_content,
     })
 
+    // Log to watchdog
+    const { logger } = await import('./activity-logger')
+    logger.incidentCreated({
+      incidentId: incident.id, title: data.title, cluster: data.cluster ?? '',
+      trigger: data.source, priority: data.priority, severity: data.severity, confidence: 0,
+    }).catch(() => {})
+
     return incident as Incident
   } catch (error) {
     console.error('[incidents:create]', error instanceof Error ? error.message : 'Unknown')
@@ -246,6 +253,12 @@ export async function leeDecides(
         sender_name: 'Lee Seng Hee',
       })
     }
+
+    // Log to watchdog
+    const { logger } = await import('./activity-logger')
+    logger.leeAction({
+      action, incidentId, incidentTitle: incident.title, cluster: incident.cluster ?? '',
+    }).catch(() => {})
 
     if (action === 'rejected') {
       await supabaseAdmin.from('incident_timeline').insert({

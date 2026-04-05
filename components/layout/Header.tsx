@@ -13,6 +13,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/groups': 'Groups',
   '/schedules': 'Scan Schedules',
   '/memory': 'Agent Memory',
+  '/watchdog': 'Watchdog',
   '/settings': 'Settings',
 }
 

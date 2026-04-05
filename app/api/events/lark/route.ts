@@ -95,6 +95,14 @@ async function processGroupMessage(payload: {
 
     console.log(`[lark:group:${group.cluster}]`, `Saved msg from ${payload.sender_open_id}: ${payload.content.slice(0, 60)}`)
 
+    // Log to watchdog
+    const { logger } = await import('@/lib/activity-logger')
+    logger.messageReceived({
+      messageId: payload.message_id, senderName: payload.sender_name, cluster: group.cluster,
+      groupName: group.group_name, chatId: payload.chat_id,
+      contentPreview: payload.content, contentLength: payload.content.length, noisePassed: true,
+    }).catch(() => {})
+
     // 3.5. Standup report detection (for cluster groups)
     if (group.group_type === 'cluster') {
       const { processIncomingClusterMessage } = await import('@/lib/briefings/standup-detector')
