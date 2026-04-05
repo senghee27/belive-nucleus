@@ -17,6 +17,7 @@ export type Incident = {
   monitored_group_id: string | null
   agent: Agent
   problem_type: string | null
+  category: string
   priority: Priority
   severity: Severity
   title: string
@@ -132,4 +133,27 @@ export type NucleusSession = {
   lark_token_expires_at: number
   session_expires_at: number
   issued_at: number
+}
+
+export const ISSUE_CATEGORIES: Record<string, { label: string; icon: string; color: string }> = {
+  air_con: { label: 'Air Con', icon: '🌬️', color: '#4BB8F2' },
+  plumbing: { label: 'Plumbing / Leak', icon: '💧', color: '#4BB8F2' },
+  electrical: { label: 'Electrical', icon: '⚡', color: '#E8A838' },
+  lift: { label: 'Lift', icon: '🛗', color: '#9B6DFF' },
+  door_lock: { label: 'Door / Lock', icon: '🚪', color: '#4B5A7A' },
+  water_heater: { label: 'Water Heater', icon: '🌡️', color: '#F2784B' },
+  general_repair: { label: 'General Repair', icon: '🔨', color: '#4B5A7A' },
+  structural: { label: 'Structural', icon: '🧱', color: '#E05252' },
+  pest: { label: 'Pest', icon: '🦟', color: '#E8A838' },
+  cleaning: { label: 'Cleaning', icon: '🧹', color: '#4BF2A2' },
+  hygiene: { label: 'Hygiene / Waste', icon: '🗑️', color: '#4BF2A2' },
+  move_in: { label: 'Move In', icon: '🚶', color: '#4BF2A2' },
+  move_out: { label: 'Move Out', icon: '📦', color: '#E8A838' },
+  access_card: { label: 'Access Card', icon: '🔑', color: '#9B6DFF' },
+  onboarding: { label: 'Onboarding', icon: '📋', color: '#4BB8F2' },
+  safety: { label: 'Safety Issue', icon: '🚨', color: '#E05252' },
+  eviction: { label: 'Eviction', icon: '⚖️', color: '#E05252' },
+  payment: { label: 'Payment', icon: '💰', color: '#E8A838' },
+  complaint: { label: 'Complaint', icon: '📣', color: '#F27BAD' },
+  other: { label: 'Other', icon: '❓', color: '#4B5A7A' },
 }

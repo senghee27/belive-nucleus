@@ -18,9 +18,9 @@ export async function classifyMessage(
   content: string,
   source: string,
   groupContext?: string
-): Promise<{ agent: string; problem_type: string; priority: Priority; severity: Severity; title: string; is_incident: boolean }> {
+): Promise<{ agent: string; problem_type: string; priority: Priority; severity: Severity; title: string; is_incident: boolean; category: string }> {
   if (content.trim().length < 15) {
-    return { agent: 'coo', problem_type: 'none', priority: 'P3', severity: 'GREEN', title: '', is_incident: false }
+    return { agent: 'coo', problem_type: 'none', priority: 'P3', severity: 'GREEN', title: '', is_incident: false, category: 'other' }
   }
 
   try {
@@ -53,8 +53,10 @@ RULES:
   BAD: "Water issue reported"
 - When in doubt, classify as incident. Better to flag too many than miss a real one.
 
+Also classify category (one of): air_con, plumbing, electrical, lift, door_lock, water_heater, general_repair, structural, pest, cleaning, hygiene, move_in, move_out, access_card, onboarding, safety, eviction, payment, complaint, other
+
 Respond ONLY valid JSON:
-{"is_incident":true,"agent":"coo","problem_type":"ops_maintenance","priority":"P2","severity":"YELLOW","title":"specific title"}`,
+{"is_incident":true,"agent":"coo","problem_type":"ops_maintenance","priority":"P2","severity":"YELLOW","title":"specific title","category":"plumbing"}`,
       messages: [{ role: 'user', content: `Source: ${source}\nMessage: ${content}` }],
     })
 
@@ -67,10 +69,11 @@ Respond ONLY valid JSON:
       severity: (parsed.severity as Severity) ?? 'YELLOW',
       title: (parsed.title as string) ?? content.slice(0, 80),
       is_incident: (parsed.is_incident as boolean) ?? false,
+      category: (parsed.category as string) ?? 'other',
     }
   } catch (error) {
     console.error('[incidents:classify]', error instanceof Error ? error.message : 'Unknown')
-    return { agent: 'coo', problem_type: 'ops_maintenance', priority: 'P3', severity: 'YELLOW', title: content.slice(0, 80), is_incident: false }
+    return { agent: 'coo', problem_type: 'ops_maintenance', priority: 'P3', severity: 'YELLOW', title: content.slice(0, 80), is_incident: false, category: 'other' }
   }
 }
 
@@ -116,7 +119,7 @@ export async function createIncident(data: {
   source: string; source_message_id?: string; chat_id?: string; cluster?: string
   group_name?: string; monitored_group_id?: string; agent: string; problem_type: string
   priority: string; severity: string; title: string; raw_content: string
-  sender_name?: string; sender_open_id?: string
+  sender_name?: string; sender_open_id?: string; category?: string
 }): Promise<Incident | null> {
   try {
     // Dedup check

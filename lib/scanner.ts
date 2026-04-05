@@ -165,6 +165,7 @@ export async function processGroupMessages(group: MonitoredGroup, messages: Lark
           priority: classification.priority, severity: classification.severity,
           title: classification.title, raw_content: msg.content,
           sender_name: msg.sender_name ?? undefined, sender_open_id: msg.sender_open_id ?? undefined,
+          category: classification.category,
         })
         if (incident) {
           await analyseIncident(incident.id)
