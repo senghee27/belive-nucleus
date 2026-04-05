@@ -49,7 +49,7 @@ export async function readGroupMessages(group: MonitoredGroup, hoursBack = 6): P
       const messageId = item.message_id as string
       if (!messageId) continue
       const msgType = item.msg_type as string
-      if (['system', 'image', 'media', 'file'].includes(msgType)) continue
+      if (['system', 'image', 'media', 'file', 'sticker'].includes(msgType)) continue
       const createTime = parseInt(item.create_time)
       if (createTime < cutoff) continue
 
@@ -59,11 +59,26 @@ export async function readGroupMessages(group: MonitoredGroup, hoursBack = 6): P
       let content = ''
       try {
         const body = JSON.parse(item.body?.content ?? '{}')
-        if (body.text) content = body.text.replace(/<[^>]*>/g, '').trim()
-        else if (body.content) {
+        if (body.text) {
+          content = body.text.replace(/<[^>]*>/g, '').trim()
+        } else if (body.content) {
           const texts: string[] = []
           for (const line of body.content ?? []) for (const elem of line ?? []) if (elem.text) texts.push(elem.text)
           content = texts.join(' ').trim()
+        } else if (body.title || body.elements) {
+          // Interactive card (used by AI Report)
+          const texts: string[] = []
+          if (body.title) texts.push(body.title)
+          for (const row of body.elements ?? []) {
+            if (Array.isArray(row)) {
+              for (const elem of row) {
+                if (elem?.text) texts.push(elem.text)
+              }
+            } else if (row?.text) {
+              texts.push(row.text)
+            }
+          }
+          content = texts.join('\n').trim()
         }
       } catch { content = item.body?.content ?? '' }
 

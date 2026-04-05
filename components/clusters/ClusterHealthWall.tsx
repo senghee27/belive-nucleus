@@ -30,11 +30,14 @@ export function ClusterHealthWall({ initialClusters }: { initialClusters: Cluste
   async function handleCompute() {
     setComputing(true)
     try {
+      toast.info('Scanning all groups + AI Report...')
+      await fetch('/api/lark/scan', { method: 'POST', headers: { 'x-nucleus-secret': 'belive_nucleus_2026' } })
+      toast.info('Computing cluster health...')
       await fetch('/api/clusters/compute', { method: 'POST', headers: { 'x-nucleus-secret': 'belive_nucleus_2026' } })
       const d = await fetch('/api/clusters').then(r => r.json())
       if (d.ok) setClusters(d.clusters)
-      toast.success('Health recomputed')
-    } catch { toast.error('Failed') }
+      toast.success('Scan & health computation complete')
+    } catch { toast.error('Scan failed') }
     finally { setComputing(false) }
   }
 
@@ -51,8 +54,10 @@ export function ClusterHealthWall({ initialClusters }: { initialClusters: Cluste
             <h2 className="text-lg font-semibold text-[#E8EEF8]">Cluster Health</h2>
             {redCount > 0 && <span className="text-xs px-2 py-0.5 rounded-full bg-[#E05252]/15 text-[#E05252] animate-pulse">{redCount} critical</span>}
           </div>
-          <button onClick={handleCompute} disabled={computing} className="p-2 text-[#4B5A7A] hover:text-[#E8EEF8] transition-colors">
-            <RefreshCw size={14} className={computing ? 'animate-spin' : ''} />
+          <button onClick={handleCompute} disabled={computing}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#F2784B]/10 text-[#F2784B] text-xs font-medium hover:bg-[#F2784B]/20 transition-colors disabled:opacity-50">
+            <RefreshCw size={12} className={computing ? 'animate-spin' : ''} />
+            {computing ? 'Scanning...' : 'Scan & Compute'}
           </button>
         </div>
 
