@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
-import { Search, LayoutList, LayoutGrid } from 'lucide-react'
+import { Search, LayoutList, LayoutGrid, X } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import type { Incident, IncidentStats } from '@/lib/types'
 import { ISSUE_CATEGORIES } from '@/lib/types'
@@ -20,21 +20,68 @@ const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }>
   archived: { bg: '#4B5A7A', text: '#4B5A7A', label: 'ARCHIVED' },
 }
 
+const STAT_STATUS_MAP: Record<string, string[]> = {
+  'New': ['new', 'analysed'],
+  'Awaiting Lee': ['awaiting_lee'],
+  'Acting': ['acting'],
+  'Resolved': ['resolved'],
+}
+
 type ViewMode = 'table' | 'grouped'
+type CommandState = {
+  sevFilter: string[]; clusterFilter: string[]; catFilter: string[]; priFilter: string[]
+  statusFilter: string[]; search: string; view: ViewMode
+  sortBy: string; sortDir: string; scrollY: number; lastSelectedId: string | null
+}
+
+function saveCommandState(state: CommandState) {
+  try { sessionStorage.setItem('nucleus_command_state', JSON.stringify(state)) } catch { /* ignore */ }
+}
+function loadCommandState(): CommandState | null {
+  try {
+    const raw = sessionStorage.getItem('nucleus_command_state')
+    return raw ? JSON.parse(raw) : null
+  } catch { return null }
+}
 
 export function CommandCenter({ initialIncidents, initialStats }: { initialIncidents: Incident[]; initialStats: IncidentStats }) {
   const router = useRouter()
   const [incidents, setIncidents] = useState<Incident[]>(initialIncidents)
   const [stats, setStats] = useState<IncidentStats>(initialStats)
-  const [view, setView] = useState<ViewMode>('table')
-  const [search, setSearch] = useState('')
-  const [sevFilter, setSevFilter] = useState<string[]>([])
-  const [clusterFilter, setClusterFilter] = useState<string[]>([])
-  const [catFilter, setCatFilter] = useState<string[]>([])
-  const [priFilter, setPriFilter] = useState<string[]>([])
-  const [statusFilter, setStatusFilter] = useState<string[]>([])
-  const [sortBy, setSortBy] = useState<'severity' | 'created' | 'updated'>('severity')
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  // FIX 3: Restore state from sessionStorage
+  const saved = typeof window !== 'undefined' ? loadCommandState() : null
+  const [view, setView] = useState<ViewMode>((saved?.view as ViewMode) ?? 'table')
+  const [search, setSearch] = useState(saved?.search ?? '')
+  const [sevFilter, setSevFilter] = useState<string[]>(saved?.sevFilter ?? [])
+  const [clusterFilter, setClusterFilter] = useState<string[]>(saved?.clusterFilter ?? [])
+  const [catFilter, setCatFilter] = useState<string[]>(saved?.catFilter ?? [])
+  const [priFilter, setPriFilter] = useState<string[]>(saved?.priFilter ?? [])
+  const [statusFilter, setStatusFilter] = useState<string[]>(saved?.statusFilter ?? [])
+  const [sortBy, setSortBy] = useState<'severity' | 'created' | 'updated'>((saved?.sortBy as 'severity') ?? 'severity')
+  const [sortDir] = useState<'asc' | 'desc'>((saved?.sortDir as 'asc') ?? 'desc')
+  const [activeStatPill, setActiveStatPill] = useState<string | null>(null)
+  const [lastSelectedId] = useState<string | null>(saved?.lastSelectedId ?? null)
+
+  // FIX 3: Restore scroll position
+  useEffect(() => {
+    if (saved?.scrollY) {
+      requestAnimationFrame(() => {
+        window.scrollTo({ top: saved.scrollY, behavior: 'instant' as ScrollBehavior })
+      })
+    }
+    // Flash last selected row
+    if (saved?.lastSelectedId) {
+      requestAnimationFrame(() => {
+        const row = document.querySelector(`[data-incident-id="${saved.lastSelectedId}"]`)
+        if (row) {
+          row.classList.add('row-flash')
+          setTimeout(() => row.classList.remove('row-flash'), 1500)
+        }
+      })
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     const ch = supabase.channel('command-realtime')
@@ -57,13 +104,11 @@ export function CommandCenter({ initialIncidents, initialStats }: { initialIncid
       const q = search.toLowerCase()
       list = list.filter(i => i.title.toLowerCase().includes(q) || i.raw_content.toLowerCase().includes(q) || (i.sender_name ?? '').toLowerCase().includes(q) || (i.cluster ?? '').toLowerCase().includes(q))
     }
-    // Sort
     list = [...list].sort((a, b) => {
       if (sortBy === 'severity') {
-        const sevOrder: Record<string, number> = { RED: 0, YELLOW: 1, GREEN: 2 }
-        const diff = (sevOrder[a.severity] ?? 2) - (sevOrder[b.severity] ?? 2)
-        if (diff !== 0) return diff
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        const o: Record<string, number> = { RED: 0, YELLOW: 1, GREEN: 2 }
+        const diff = (o[a.severity] ?? 2) - (o[b.severity] ?? 2)
+        return diff !== 0 ? diff : new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       }
       if (sortBy === 'created') return sortDir === 'desc' ? new Date(b.created_at).getTime() - new Date(a.created_at).getTime() : new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
       if (sortBy === 'updated') return sortDir === 'desc' ? new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime() : new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
@@ -75,6 +120,28 @@ export function CommandCenter({ initialIncidents, initialStats }: { initialIncid
   function toggleFilter(arr: string[], val: string, setter: (v: string[]) => void) {
     setter(arr.includes(val) ? arr.filter(v => v !== val) : [...arr, val])
   }
+
+  // FIX 2: Clickable stat pills
+  function handleStatPillClick(label: string) {
+    const statuses = STAT_STATUS_MAP[label]
+    if (!statuses) return
+    if (activeStatPill === label) {
+      setActiveStatPill(null)
+      setStatusFilter([])
+    } else {
+      setActiveStatPill(label)
+      setStatusFilter(statuses)
+    }
+  }
+
+  // FIX 3: Save state before navigating
+  const handleRowClick = useCallback((id: string) => {
+    saveCommandState({
+      sevFilter, clusterFilter, catFilter, priFilter, statusFilter, search, view,
+      sortBy, sortDir, scrollY: window.scrollY, lastSelectedId: id,
+    })
+    router.push(`/command/${id}`)
+  }, [sevFilter, clusterFilter, catFilter, priFilter, statusFilter, search, view, sortBy, sortDir, router])
 
   const statPills = [
     { label: 'New', count: (stats.by_status?.new ?? 0) + (stats.by_status?.analysed ?? 0), color: '#E05252' },
@@ -88,21 +155,35 @@ export function CommandCenter({ initialIncidents, initialStats }: { initialIncid
 
   return (
     <div className="space-y-3">
-      {/* Stat pills */}
-      <div className="flex gap-2">
-        {statPills.map(s => (
-          <div key={s.label} className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0D1525] border border-[#1A2035] rounded-lg">
-            <span className="text-sm font-bold font-[family-name:var(--font-jetbrains-mono)]" style={{ color: s.count > 0 ? s.color : '#4B5A7A' }}>{s.count}</span>
-            <span className="text-[10px] text-[#4B5A7A]">{s.label}</span>
-          </div>
-        ))}
+      {/* FIX 2: Clickable stat pills */}
+      <div className="flex items-center gap-2">
+        {statPills.map(s => {
+          const isActive = activeStatPill === s.label
+          return (
+            <button key={s.label} onClick={() => handleStatPillClick(s.label)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                isActive ? 'text-white' : 'bg-[#0D1525] border border-[#1A2035]'
+              }`}
+              style={isActive ? { backgroundColor: s.color, borderColor: s.color } : {}}>
+              <span className="text-sm font-bold font-[family-name:var(--font-jetbrains-mono)]"
+                style={{ color: isActive ? 'white' : s.count > 0 ? s.color : '#4B5A7A' }}>{s.count}</span>
+              <span className={`text-[10px] ${isActive ? 'text-white/80' : 'text-[#4B5A7A]'}`}>{s.label}</span>
+            </button>
+          )
+        })}
+        {activeStatPill && (
+          <button onClick={() => { setActiveStatPill(null); setStatusFilter([]) }}
+            className="flex items-center gap-1 text-[9px] text-[#4B5A7A] hover:text-[#E8EEF8]">
+            <X size={10} /> Clear filter
+          </button>
+        )}
       </div>
 
-      {/* Filter bar row 1: severity + clusters */}
+      {/* Filter bar row 1 */}
       <div className="flex flex-wrap gap-1.5">
         {['RED', 'YELLOW', 'GREEN'].map(s => (
           <button key={s} onClick={() => toggleFilter(sevFilter, s, setSevFilter)}
-            className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${sevFilter.includes(s) ? 'text-white' : 'text-[#4B5A7A] hover:text-[#8A9BB8]'}`}
+            className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${sevFilter.includes(s) ? '' : 'text-[#4B5A7A] hover:text-[#8A9BB8]'}`}
             style={sevFilter.includes(s) ? { backgroundColor: SEV_COLORS[s] + '30', color: SEV_COLORS[s] } : {}}>
             {s === 'RED' ? '🔴' : s === 'YELLOW' ? '🟡' : '🟢'} {s}
           </button>
@@ -117,7 +198,7 @@ export function CommandCenter({ initialIncidents, initialStats }: { initialIncid
         ))}
       </div>
 
-      {/* Filter bar row 2: categories + priority + status */}
+      {/* Filter bar row 2 */}
       <div className="flex flex-wrap gap-1.5">
         {topCategories.map(cat => {
           const catInfo = ISSUE_CATEGORIES[cat]
@@ -138,7 +219,7 @@ export function CommandCenter({ initialIncidents, initialStats }: { initialIncid
         ))}
         <span className="w-px h-5 bg-[#1A2035] self-center mx-1" />
         {['new', 'awaiting_lee', 'acting', 'resolved'].map(s => (
-          <button key={s} onClick={() => toggleFilter(statusFilter, s, setStatusFilter)}
+          <button key={s} onClick={() => { toggleFilter(statusFilter, s, setStatusFilter); setActiveStatPill(null) }}
             className={`px-2 py-0.5 rounded text-[10px] ${statusFilter.includes(s) ? 'text-[#F2784B] bg-[#F2784B]/15' : 'text-[#4B5A7A] hover:text-[#8A9BB8]'}`}>
             {STATUS_STYLES[s]?.label ?? s}
           </button>
@@ -167,11 +248,20 @@ export function CommandCenter({ initialIncidents, initialStats }: { initialIncid
         </div>
       </div>
 
-      {/* Table or Grouped View */}
+      {/* CSS for row flash animation */}
+      <style jsx global>{`
+        @keyframes rowFlash {
+          0% { background-color: rgba(242,120,75,0.2) }
+          100% { background-color: transparent }
+        }
+        .row-flash { animation: rowFlash 1.5s ease-out }
+      `}</style>
+
+      {/* Table or Grouped */}
       {view === 'table' ? (
-        <WarRoomTable incidents={filtered} onRowClick={(id) => router.push(`/command/${id}`)} />
+        <WarRoomTable incidents={filtered} onRowClick={handleRowClick} />
       ) : (
-        <GroupedView incidents={filtered} onRowClick={(id) => router.push(`/command/${id}`)} />
+        <GroupedView incidents={filtered} onRowClick={handleRowClick} />
       )}
     </div>
   )
@@ -185,13 +275,13 @@ function WarRoomTable({ incidents, onRowClick }: { incidents: Incident[]; onRowC
   return (
     <div className="bg-[#0D1525] border border-[#1A2035] rounded-xl overflow-hidden">
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[900px]">
+        <table className="w-full min-w-[960px]">
           <thead>
             <tr className="border-b border-[#1A2035] text-[9px] text-[#4B5A7A] uppercase tracking-wider">
               <th className="w-6 p-2" />
               <th className="w-14 p-2 text-left">Cluster</th>
               <th className="w-20 p-2 text-left">Unit</th>
-              <th className="w-7 p-2" title="Category">Cat</th>
+              <th className="w-20 p-2 text-left">Category</th>
               <th className="p-2 text-left">Issue</th>
               <th className="w-16 p-2 text-left">Owner</th>
               <th className="w-10 p-2">Pri</th>
@@ -221,10 +311,11 @@ function IncidentRow({ incident: i, onClick }: { incident: Incident; onClick: ()
   const updatedAge = formatDistanceToNow(new Date(i.updated_at), { addSuffix: false })
   const createdHours = (Date.now() - new Date(i.created_at).getTime()) / 3600000
   const updatedHours = (Date.now() - new Date(i.updated_at).getTime()) / 3600000
+  const catLabel = cat.label.length > 8 ? cat.label.slice(0, 8) + '…' : cat.label
 
   return (
-    <tr onClick={onClick}
-      className={`border-b border-[#1A2035]/30 cursor-pointer transition-colors h-9 hover:bg-[#111D30] ${isSilent ? 'bg-[rgba(155,109,255,0.06)]' : ''}`}>
+    <tr onClick={onClick} data-incident-id={i.id}
+      className={`border-b border-[#1A2035]/30 cursor-pointer transition-colors hover:bg-[#111D30] group ${isSilent ? 'bg-[rgba(155,109,255,0.06)]' : ''}`}>
       <td className="p-2">
         <span className={`block w-2 h-2 rounded-full ${i.priority === 'P1' ? 'animate-pulse' : ''}`} style={{ backgroundColor: SEV_COLORS[i.severity] ?? '#4B5A7A' }} />
       </td>
@@ -234,11 +325,15 @@ function IncidentRow({ incident: i, onClick }: { incident: Incident; onClick: ()
       <td className="p-2">
         <span className="text-[11px] font-[family-name:var(--font-jetbrains-mono)] text-[#8A9BB8]">{unit}</span>
       </td>
-      <td className="p-2 text-center" title={cat.label}>
-        <span className="text-sm">{cat.icon}</span>
+      {/* FIX 1: Category with icon + label */}
+      <td className="p-2" title={cat.label}>
+        <span className="text-[11px] text-[#4B5A7A] whitespace-nowrap">{cat.icon} {catLabel}</span>
       </td>
+      {/* FIX 1: Issue wraps to 2 lines */}
       <td className="p-2">
-        <span className="text-[12px] text-[#E8EEF8] truncate block max-w-[220px]" title={i.title}>{i.title.slice(0, 40)}{i.title.length > 40 ? '…' : ''}</span>
+        <span className="text-[12px] text-[#E8EEF8] leading-snug" style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+          {i.title}
+        </span>
       </td>
       <td className="p-2">
         <span className="text-[11px] text-[#8A9BB8]">{i.sender_name?.split(' ')[0] ?? '—'}</span>
@@ -255,8 +350,8 @@ function IncidentRow({ incident: i, onClick }: { incident: Incident; onClick: ()
       <td className="p-2">
         <span className={`text-[10px] ${updatedHours > 72 ? 'text-[#E05252]' : updatedHours > 24 ? 'text-[#E8A838]' : 'text-[#4B5A7A]'}`} title={new Date(i.updated_at).toLocaleString('en-MY')}>{updatedAge}</span>
       </td>
-      <td className="p-2 text-center opacity-0 group-hover:opacity-100">
-        <span className="text-[#4B5A7A]">→</span>
+      <td className="p-2 text-center">
+        <span className="text-[#4B5A7A] opacity-0 group-hover:opacity-100 transition-opacity">→</span>
       </td>
     </tr>
   )
@@ -286,7 +381,7 @@ function GroupedView({ incidents, onRowClick }: { incidents: Incident[]; onRowCl
             </button>
             {!isCollapsed && (
               <div className="bg-[#0D1525] border border-[#1A2035] rounded-xl overflow-hidden">
-                <table className="w-full min-w-[900px]">
+                <table className="w-full min-w-[960px]">
                   <tbody>
                     {g.items.map(inc => <IncidentRow key={inc.id} incident={inc} onClick={() => onRowClick(inc.id)} />)}
                   </tbody>
