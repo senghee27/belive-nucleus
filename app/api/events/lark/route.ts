@@ -95,6 +95,12 @@ async function processGroupMessage(payload: {
 
     console.log(`[lark:group:${group.cluster}]`, `Saved msg from ${payload.sender_open_id}: ${payload.content.slice(0, 60)}`)
 
+    // 3.5. Standup report detection (for cluster groups)
+    if (group.group_type === 'cluster') {
+      const { processIncomingClusterMessage } = await import('@/lib/briefings/standup-detector')
+      processIncomingClusterMessage(payload.content, payload.sender_name, payload.sender_open_id, group.cluster, payload.chat_id).catch(console.error)
+    }
+
     // 4. AI Report group — parse as report
     if (group.group_type === 'ai_report') {
       if (payload.content.includes('BLV-RQ-') || payload.content.includes('Livability Report')) {
