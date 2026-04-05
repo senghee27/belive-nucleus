@@ -5,10 +5,6 @@ const LARK_API = 'https://open.larksuite.com'
 // In-memory tenant token cache
 let tenantTokenCache: { token: string; expiresAt: number } | null = null
 
-function getBasicAuth(): string {
-  return Buffer.from(`${process.env.LARK_APP_ID}:${process.env.LARK_APP_SECRET}`).toString('base64')
-}
-
 export async function getLeeUserToken(): Promise<string> {
   // Check for active user token
   const { data: token } = await supabaseAdmin
@@ -49,11 +45,13 @@ export async function getLeeUserToken(): Promise<string> {
 
 export async function refreshUserToken(refreshToken: string): Promise<string> {
   try {
+    const tenantToken = await getTenantToken()
+
     const res = await fetch(`${LARK_API}/open-apis/authen/v1/oidc/refresh_access_token`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Basic ${getBasicAuth()}`,
+        Authorization: `Bearer ${tenantToken}`,
       },
       body: JSON.stringify({
         grant_type: 'refresh_token',

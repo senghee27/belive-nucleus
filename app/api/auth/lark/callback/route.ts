@@ -11,16 +11,32 @@ export async function GET(req: NextRequest) {
 
     const appId = process.env.LARK_APP_ID!
     const appSecret = process.env.LARK_APP_SECRET!
-    const basicAuth = Buffer.from(`${appId}:${appSecret}`).toString('base64')
 
-    // Exchange code for tokens
+    // First get a tenant_access_token for the API call
+    const tenantRes = await fetch(
+      'https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
+      }
+    )
+    const tenantData = await tenantRes.json()
+    const tenantToken = tenantData.tenant_access_token
+
+    if (!tenantToken) {
+      console.error('[lark:oauth]', 'Failed to get tenant token', tenantData)
+      return NextResponse.redirect(new URL('/settings?error=tenant_token_failed', req.url))
+    }
+
+    // Exchange code for user tokens using tenant token
     const res = await fetch(
       'https://open.larksuite.com/open-apis/authen/v1/oidc/access_token',
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Basic ${basicAuth}`,
+          Authorization: `Bearer ${tenantToken}`,
         },
         body: JSON.stringify({
           grant_type: 'authorization_code',
@@ -30,7 +46,7 @@ export async function GET(req: NextRequest) {
     )
 
     const data = await res.json()
-    console.log('[lark:oauth]', JSON.stringify(data).slice(0, 300))
+    console.log('[lark:oauth]', JSON.stringify(data).slice(0, 500))
 
     if (data.code !== 0) {
       console.error('[lark:oauth]', `Error ${data.code}: ${data.msg}`)
