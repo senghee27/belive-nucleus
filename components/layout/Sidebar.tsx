@@ -2,13 +2,14 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Home, Zap, LayoutGrid, Clock, User, DollarSign, Settings, Code, Brain, Wrench } from 'lucide-react'
+import { Home, Zap, LayoutGrid, Clock, User, DollarSign, Settings, Code, Brain, Wrench, Activity } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
 const NAV_ITEMS = [
   { href: '/overview', icon: Home, label: 'Overview' },
   { href: '/command', icon: Zap, label: 'Command', showBadge: true },
+  { href: '/clusters', icon: Activity, label: 'Clusters', showRedBadge: true },
   { href: '/groups', icon: LayoutGrid, label: 'Groups' },
   { href: '/schedules', icon: Clock, label: 'Schedules' },
   { href: '/ceo', icon: User, label: 'CEO', color: '#9B6DFF' },
@@ -22,17 +23,26 @@ const NAV_ITEMS = [
 export function Sidebar() {
   const pathname = usePathname()
   const [badgeCount, setBadgeCount] = useState(0)
+  const [redClusters, setRedClusters] = useState(0)
 
   useEffect(() => {
     supabase.from('incidents').select('id', { count: 'exact', head: true })
       .in('status', ['new', 'awaiting_lee'])
       .then(({ count }) => setBadgeCount(count ?? 0))
+    supabase.from('cluster_health_cache').select('id', { count: 'exact', head: true })
+      .eq('health_status', 'red')
+      .then(({ count }) => setRedClusters(count ?? 0))
 
-    const channel = supabase.channel('sidebar-incidents')
+    const channel = supabase.channel('sidebar-all')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'incidents' }, () => {
         supabase.from('incidents').select('id', { count: 'exact', head: true })
           .in('status', ['new', 'awaiting_lee'])
           .then(({ count }) => setBadgeCount(count ?? 0))
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cluster_health_cache' }, () => {
+        supabase.from('cluster_health_cache').select('id', { count: 'exact', head: true })
+          .eq('health_status', 'red')
+          .then(({ count }) => setRedClusters(count ?? 0))
       })
       .subscribe()
 
@@ -57,6 +67,11 @@ export function Sidebar() {
                 {item.showBadge && badgeCount > 0 && (
                   <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 flex items-center justify-center rounded-full bg-[#E8A838] text-white text-[9px] font-bold px-1 animate-pulse">
                     {badgeCount}
+                  </span>
+                )}
+                {'showRedBadge' in item && item.showRedBadge && redClusters > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 flex items-center justify-center rounded-full bg-[#E05252] text-white text-[9px] font-bold px-1 animate-pulse">
+                    {redClusters}
                   </span>
                 )}
               </Link>

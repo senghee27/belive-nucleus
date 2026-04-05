@@ -90,3 +90,32 @@ export type MonitoredGroup = {
   issue_count_total: number
   active_issues: number
 }
+
+export type ClusterHealth = {
+  id: string
+  updated_at: string
+  cluster: string
+  cluster_name: string
+  chat_id: string
+  health_status: 'red' | 'amber' | 'green'
+  health_score: number
+  maintenance_total: number
+  maintenance_overdue: number
+  maintenance_active: number
+  maintenance_silent: number
+  maintenance_max_age_days: number
+  cleaning_total: number
+  cleaning_overdue: number
+  cleaning_active: number
+  cleaning_silent: number
+  cleaning_max_age_days: number
+  move_in_pending: number
+  move_in_overdue: number
+  turnaround_total: number
+  turnaround_warning: number
+  turnaround_breach: number
+  turnaround_max_days: number
+  last_cluster_message_at: string | null
+  cluster_silent_hours: number
+  last_computed_at: string
+}
