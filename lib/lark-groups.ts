@@ -2,30 +2,11 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getTenantToken, getLeeUserToken } from '@/lib/lark-tokens'
 import { sendP1AlertToLee } from '@/lib/briefings/issue-dm'
 import { CLUSTER_COLORS } from '@/lib/issues'
+import { getActiveGroups, updateLastScanned, incrementGroupStats } from '@/lib/monitored-groups'
 import Anthropic from '@anthropic-ai/sdk'
 
 const LARK_API = 'https://open.larksuite.com'
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-
-export const TEST_CLUSTERS: Record<string, string> = {
-  C1: 'oc_d1444b3f367192219a0a60b4dfb7fecb',
-  C2: 'oc_2592d0368e35fce2a5712c95e446ec17',
-  C11: 'oc_269af941aba2403693dd5dad8a45e832',
-}
-
-export const ALL_CLUSTERS: Record<string, string> = {
-  C1: 'oc_d1444b3f367192219a0a60b4dfb7fecb',
-  C2: 'oc_2592d0368e35fce2a5712c95e446ec17',
-  C3: 'oc_8557892a71694977e646d0750286b532',
-  C4: 'oc_23f4b9516f13fcdd9d049660bf3c2851',
-  C5: 'oc_6d9d83b2c73ab20a168a3cc78de68994',
-  C6: 'oc_c7c2b5e1a8728f527ca618f5b644c934',
-  C7: 'oc_97eb2eebfc235bd180afceafe5a9c514',
-  C8: 'oc_ace6312bfd7317550940ed001f04a92f',
-  C9: 'oc_e59ce72f6864572d10d68462d856aad9',
-  C10: 'oc_75e4c47ca8e8e1e57a0b39e90d80e105',
-  C11: 'oc_269af941aba2403693dd5dad8a45e832',
-}
 
 type ParsedMessage = {
   message_id: string
@@ -153,17 +134,19 @@ export async function readGroupMessages(
 
 export async function detectIssues(
   messages: ParsedMessage[],
-  cluster: string
+  cluster: string,
+  groupContext?: string
 ): Promise<DetectedIssue[]> {
   const issues: DetectedIssue[] = []
 
   for (const msg of messages) {
     try {
+      const contextLine = groupContext ? `\nGroup context: ${groupContext}\nUse this context to better understand who the people in this group are and what issues are relevant.` : ''
       const result = await client.messages.create({
         model: 'claude-sonnet-4-6',
         max_tokens: 200,
         system: `You analyze BeLive Property Hub Lark messages for operational issues.
-BeLive context: co-living operator, 3000+ rooms, 55+ condos, 11 clusters, Malaysia.
+BeLive context: co-living operator, 3000+ rooms, 55+ condos, 11 clusters, Malaysia.${contextLine}
 Classify if this message indicates: maintenance issue, tenant complaint, ops emergency, staff problem, or no issue.
 Respond ONLY in valid JSON. No markdown, no backticks.
 Format: {"is_issue":true,"severity":"RED","title":"short title","owner_name":"person name or null","issue_type":"maintenance|complaint|emergency|staff|null"}`,
@@ -179,7 +162,13 @@ Format: {"is_issue":true,"severity":"RED","title":"short title","owner_name":"pe
           const severity = parsed.severity ?? 'YELLOW'
           const priority = severity === 'RED' ? 'P1' : severity === 'YELLOW' ? 'P2' : 'P3'
           const escalationHours = priority === 'P1' ? 2 : priority === 'P2' ? 24 : 48
-          const chatIdForIssue = TEST_CLUSTERS[cluster as keyof typeof TEST_CLUSTERS] ?? msg.message_id
+          // Look up chat_id from monitored_groups or use message_id as fallback
+          const { data: groupData } = await supabaseAdmin
+            .from('monitored_groups')
+            .select('chat_id')
+            .eq('cluster', cluster)
+            .single()
+          const chatIdForIssue = groupData?.chat_id ?? msg.message_id
 
           const { data: newIssue } = await supabaseAdmin.from('lark_issues').insert({
             cluster,
@@ -284,20 +273,23 @@ export async function sendGroupMessage(
   return null
 }
 
-export async function scanTestClusters() {
+export async function scanEnabledGroups() {
   const { processNewMessages, checkSilenceGaps } = await import('@/lib/issue-thread')
+  const groups = await getActiveGroups()
   const results: Record<string, { newMessages: number; issues: number }> = {}
 
-  for (const [cluster, chatId] of Object.entries(TEST_CLUSTERS)) {
-    const messages = await readGroupMessages(cluster, chatId)
-    // Link messages to existing issues first
-    await processNewMessages(messages, cluster)
-    // Detect new issues from unmatched messages
-    const issues = await detectIssues(messages, cluster)
-    // Check silence gaps
-    await checkSilenceGaps(cluster)
-    results[cluster] = { newMessages: messages.length, issues: issues.length }
+  for (const group of groups) {
+    const messages = await readGroupMessages(group.cluster, group.chat_id)
+    await processNewMessages(messages, group.cluster)
+    const issues = await detectIssues(messages, group.cluster, group.context ?? undefined)
+    await checkSilenceGaps(group.cluster)
+    await updateLastScanned(group.chat_id)
+    await incrementGroupStats(group.chat_id, messages.length, issues.length)
+    results[group.cluster] = { newMessages: messages.length, issues: issues.length }
   }
 
   return { scannedAt: new Date().toISOString(), clusters: results }
 }
+
+// Keep backward compat alias
+export const scanTestClusters = scanEnabledGroups

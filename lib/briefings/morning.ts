@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { sendGroupMessage, TEST_CLUSTERS } from '@/lib/lark-groups'
+import { sendGroupMessage } from '@/lib/lark-groups'
+import { getActiveGroups } from '@/lib/monitored-groups'
 
 const aiClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -72,7 +73,10 @@ ${messagesSummary}`,
 export async function sendMorningBriefings() {
   const results: Record<string, { sent: boolean; briefing: string }> = {}
 
-  for (const [cluster, chatId] of Object.entries(TEST_CLUSTERS)) {
+  const groups = await getActiveGroups()
+  for (const group of groups) {
+    const cluster = group.cluster
+    const chatId = group.chat_id
     try {
       const briefing = await generateMorningBriefing(cluster, chatId)
 

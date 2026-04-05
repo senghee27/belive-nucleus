@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { sendGroupMessage, TEST_CLUSTERS } from '@/lib/lark-groups'
+import { sendGroupMessage } from '@/lib/lark-groups'
 import { sendLarkMessage } from '@/lib/lark'
 
 const ESCALATION_HOURS: Record<string, number> = { P1: 2, P2: 24, P3: 48 }
@@ -253,7 +253,7 @@ export async function sendFollowUpToGroup(issueId: string, message: string): Pro
 
     if (!issue) return false
 
-    const chatId = TEST_CLUSTERS[issue.cluster as keyof typeof TEST_CLUSTERS] ?? issue.chat_id
+    const chatId = issue.chat_id
     const msgId = await sendGroupMessage(chatId, message, false)
 
     await supabaseAdmin
