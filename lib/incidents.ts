@@ -5,6 +5,12 @@ import type { Incident, IncidentStatus, Priority, Severity, IncidentStats } from
 import { formatDistanceToNow } from 'date-fns'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+
+function parseAIJson(text: string): Record<string, unknown> {
+  // Strip markdown code blocks if AI wraps response
+  const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim()
+  return JSON.parse(cleaned)
+}
 const LEE_OPEN_ID = process.env.LEE_LARK_CHAT_ID ?? ''
 const ESCALATION_HOURS: Record<Priority, number> = { P1: 2, P2: 24, P3: 48 }
 
@@ -53,14 +59,14 @@ Respond ONLY valid JSON:
     })
 
     const text = msg.content[0].type === 'text' ? msg.content[0].text : '{}'
-    const parsed = JSON.parse(text)
+    const parsed = parseAIJson(text)
     return {
-      agent: parsed.agent ?? 'coo',
-      problem_type: parsed.problem_type ?? 'ops_maintenance',
-      priority: parsed.priority ?? 'P3',
-      severity: parsed.severity ?? 'YELLOW',
-      title: parsed.title ?? content.slice(0, 80),
-      is_incident: parsed.is_incident ?? false,
+      agent: (parsed.agent as string) ?? 'coo',
+      problem_type: (parsed.problem_type as string) ?? 'ops_maintenance',
+      priority: (parsed.priority as Priority) ?? 'P3',
+      severity: (parsed.severity as Severity) ?? 'YELLOW',
+      title: (parsed.title as string) ?? content.slice(0, 80),
+      is_incident: (parsed.is_incident as boolean) ?? false,
     }
   } catch (error) {
     console.error('[incidents:classify]', error instanceof Error ? error.message : 'Unknown')
@@ -94,11 +100,11 @@ Respond ONLY valid JSON:
     })
 
     const text = msg.content[0].type === 'text' ? msg.content[0].text : '{}'
-    const parsed = JSON.parse(text)
+    const parsed = parseAIJson(text)
     return {
-      proposal: parsed.proposal ?? '',
-      reasoning: parsed.reasoning ?? '',
-      confidence: Math.min(100, Math.max(0, parsed.confidence ?? 70)),
+      proposal: (parsed.proposal as string) ?? '',
+      reasoning: (parsed.reasoning as string) ?? '',
+      confidence: Math.min(100, Math.max(0, (parsed.confidence as number) ?? 70)),
     }
   } catch (error) {
     console.error('[incidents:propose]', error instanceof Error ? error.message : 'Unknown')
