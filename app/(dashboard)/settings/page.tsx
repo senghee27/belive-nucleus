@@ -57,14 +57,18 @@ function SettingsContent() {
   async function handleScan() {
     setScanning(true)
     try {
-      const res = await fetch('/api/lark/scan', {
+      const res = await fetch('/api/cron', {
         method: 'POST',
-        headers: { 'x-nucleus-secret': 'belive_nucleus_2026' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer belive_cron_2026',
+        },
+        body: JSON.stringify({ task: 'parse-ai-report' }),
       })
       const data = await res.json()
       if (data.ok) {
-        setScanResult(data)
-        toast.success('Cluster scan complete')
+        setScanResult(data.result ?? data)
+        toast.success('Intelligence scan complete')
       } else {
         toast.error(data.error ?? 'Scan failed')
       }
@@ -154,7 +158,7 @@ function SettingsContent() {
             className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#111D30] text-sm text-[#E8EEF8] hover:bg-[#162038] transition-colors disabled:opacity-50"
           >
             <Scan size={14} />
-            {scanning ? 'Scanning...' : 'Scan Clusters Now'}
+            {scanning ? 'Running...' : 'Run Intelligence Scan'}
           </button>
           <button
             onClick={handleBriefing}
