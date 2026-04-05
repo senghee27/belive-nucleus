@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSchedulesDueNow, executeSchedule, updateScheduleAfterRun } from '@/lib/scheduler'
 import { checkSilenceAndEscalate } from '@/lib/incidents'
+import { runCrossGroupIntelligence } from '@/lib/cross-group-intelligence'
 import type { ScanSchedule } from '@/lib/scheduler'
 
 export async function GET(req: NextRequest) {

@@ -18,6 +18,8 @@ export function IncidentCard({ incident, selected, onClick }: { incident: Incide
         {incident.cluster && <span className="text-[9px] px-1 py-0.5 rounded" style={{ color: CLUSTER_COLORS[incident.cluster] ?? '#8A9BB8', backgroundColor: (CLUSTER_COLORS[incident.cluster] ?? '#8A9BB8') + '15' }}>{incident.cluster}</span>}
         <span className="text-[9px] px-1 py-0.5 rounded" style={{ color: AGENT_COLORS[incident.agent] ?? '#8A9BB8', backgroundColor: (AGENT_COLORS[incident.agent] ?? '#8A9BB8') + '15' }}>{incident.agent.toUpperCase()}</span>
         <span className="text-[9px] px-1 py-0.5 rounded-full" style={{ color: incident.priority === 'P1' ? '#E05252' : incident.priority === 'P2' ? '#E8A838' : '#4B5A7A', backgroundColor: (incident.priority === 'P1' ? '#E05252' : incident.priority === 'P2' ? '#E8A838' : '#4B5A7A') + '15' }}>{incident.priority}</span>
+        {String((incident as Record<string, unknown>).incident_type ?? '') === 'silent_ticket' && <span className="text-[9px] px-1 py-0.5 rounded bg-[#E8A838]/10 text-[#E8A838]">SILENT</span>}
+        {Boolean((incident as Record<string, unknown>).sla_overdue) && <span className="text-[9px] px-1 py-0.5 rounded bg-[#E05252]/10 text-[#E05252]">SLA</span>}
         <span className="text-[9px] text-[#2A3550] ml-auto">{formatDistanceToNow(new Date(incident.created_at), { addSuffix: true })}</span>
       </div>
 

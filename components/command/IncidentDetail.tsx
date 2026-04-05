@@ -74,6 +74,24 @@ export function IncidentDetail({ incident, onDecide, onResolve, loading }: Props
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        {/* Ticket Reference */}
+        {(() => {
+          const ext = incident as Record<string, unknown>
+          const tid = String(ext.ticket_id ?? '')
+          if (!tid) return null
+          return (
+            <div className="bg-[#080E1C] rounded-lg p-3 border border-[#1A2035]">
+              <p className="text-[9px] text-[#E8A838] mb-1">Ticket Reference</p>
+              <p className="text-xs text-[#E8EEF8] font-[family-name:var(--font-jetbrains-mono)]">{tid}</p>
+              <div className="flex gap-4 mt-1 text-[10px] text-[#4B5A7A]">
+                {ext.ticket_age_days ? <span>{String(ext.ticket_age_days)}d old</span> : null}
+                {ext.sla_overdue ? <span className="text-[#E05252]">SLA OVERDUE</span> : null}
+                {ext.ticket_owner_name ? <span>[{String(ext.ticket_owner_role)}] {String(ext.ticket_owner_name)}</span> : null}
+              </div>
+            </div>
+          )
+        })()}
+
         {/* AI Summary */}
         <div className="bg-[#080E1C] rounded-lg p-3">
           <div className="flex items-center justify-between mb-1">

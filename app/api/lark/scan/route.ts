@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { scanEnabledGroups } from '@/lib/scanner'
+import { runCrossGroupIntelligence } from '@/lib/cross-group-intelligence'
 
 export async function POST(req: NextRequest) {
   try {
     const secret = req.headers.get('x-nucleus-secret')
     if (secret !== process.env.NUCLEUS_SECRET) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    const results = await scanEnabledGroups()
+    const results = await runCrossGroupIntelligence()
     return NextResponse.json({ ok: true, ...results })
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Unknown' }, { status: 500 })
