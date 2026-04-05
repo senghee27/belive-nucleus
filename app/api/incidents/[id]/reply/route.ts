@@ -22,14 +22,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (useProposed) content = incident.ai_proposal ?? ''
     if (!content.trim()) return NextResponse.json({ error: 'Content required' }, { status: 400 })
 
-    // Detect and insert @mention tags
+    // Detect @mentions — collect open_ids for Lark at_user_ids
     const mentions = await detectMentionsInText(content)
+    const mentionOpenIds = mentions.map(m => m.openId)
+
+    // Build Lark message content with <at> tags inline
     let larkContent = content
     for (const m of mentions) {
-      const tag = await buildMentionTag(m.openId)
-      // Replace first occurrence of the name with mention tag
-      const nameRegex = new RegExp(`\\b${m.name.split(' ')[0]}\\b`, 'i')
-      larkContent = larkContent.replace(nameRegex, tag)
+      const firstName = m.name.split(' ')[0]
+      const nameRegex = new RegExp(`\\b${firstName}\\b`, 'i')
+      larkContent = larkContent.replace(nameRegex, `<at user_id="${m.openId}">${firstName}</at>`)
     }
 
     // Get user token (send as Lee)
