@@ -18,6 +18,11 @@ const SECRET_ROUTES = [
   '/api/scan-logs',
   '/api/tickets',
   '/api/staff/sync',
+  '/api/incidents',
+  '/api/clusters',
+  '/api/watchdog',
+  '/api/groups',
+  '/api/staff',
 ]
 
 export async function middleware(request: NextRequest) {
