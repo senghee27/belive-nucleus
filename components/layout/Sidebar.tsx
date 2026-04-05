@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Home, Zap, LayoutGrid, Clock, User, DollarSign, Settings, Code, Brain, Wrench, Activity } from 'lucide-react'
+import { Home, Zap, LayoutGrid, Clock, User, DollarSign, Settings, Code, Brain, Wrench, Activity, LogOut } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
@@ -78,8 +78,11 @@ export function Sidebar() {
             )
           })}
         </nav>
-        <div className="flex items-center justify-center h-12 border-t border-[#1A2035]">
+        <div className="flex flex-col items-center gap-2 py-3 border-t border-[#1A2035]">
           <span className="w-2 h-2 rounded-full bg-[#4BF2A2] animate-pulse" />
+          <a href="/api/auth/logout" className="text-[#2A3550] hover:text-[#E05252] transition-colors" title="Logout">
+            <LogOut size={14} />
+          </a>
         </div>
       </aside>
 
