@@ -52,12 +52,27 @@ export function ClusterColumn({ cluster: c, color, selected, onClick }: {
           warning={c.turnaround_warning} breach={c.turnaround_breach} maxDays={c.turnaround_max_days} />
       </div>
 
-      {/* Last activity */}
-      <div className="flex items-center gap-1 mt-2 pt-2 border-t border-[#1A2035]">
-        <MessageSquare size={10} className="text-[#4B5A7A]" />
-        <span className={`text-[9px] ${c.cluster_silent_hours > 24 ? 'text-[#E05252]' : c.cluster_silent_hours > 12 ? 'text-[#E8A838]' : 'text-[#4B5A7A]'}`}>
-          {silentLabel} {c.cluster_silent_hours > 12 ? '⚠️' : ''}
-        </span>
+      {/* Last activity + compliance */}
+      <div className="mt-2 pt-2 border-t border-[#1A2035] space-y-1">
+        <div className="flex items-center gap-1">
+          <MessageSquare size={10} className="text-[#4B5A7A]" />
+          <span className={`text-[9px] ${c.cluster_silent_hours > 24 ? 'text-[#E05252]' : c.cluster_silent_hours > 12 ? 'text-[#E8A838]' : 'text-[#4B5A7A]'}`}>
+            {silentLabel} {c.cluster_silent_hours > 12 ? '⚠️' : ''}
+          </span>
+        </div>
+        {c.today_compliance && (
+          <div className="flex items-center gap-1">
+            <span className={`text-[9px] ${
+              c.today_compliance === 'compliant' ? 'text-[#4BF2A2]' :
+              c.today_compliance === 'reminder_sent' ? 'text-[#E8A838]' :
+              c.today_compliance === 'non_compliant' ? 'text-[#E05252] animate-pulse' : 'text-[#4B5A7A]'
+            }`}>
+              {c.today_compliance === 'compliant' ? '📋 ✅' :
+               c.today_compliance === 'reminder_sent' ? '📋 ⏳' :
+               c.today_compliance === 'non_compliant' ? '📋 ❌' : '📋 ⏳'}
+            </span>
+          </div>
+        )}
       </div>
     </button>
   )

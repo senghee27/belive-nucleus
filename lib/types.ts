@@ -118,4 +118,8 @@ export type ClusterHealth = {
   last_cluster_message_at: string | null
   cluster_silent_hours: number
   last_computed_at: string
+  today_compliance: string | null
+  standup_report_at: string | null
+  brief_sent_today: boolean
+  occ_sent_today: boolean
 }

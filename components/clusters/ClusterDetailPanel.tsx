@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { X, Wrench, Sparkles, LogIn, RefreshCw, MessageSquare, ArrowUp, CheckCircle } from 'lucide-react'
+import { X, Wrench, Sparkles, LogIn, RefreshCw, MessageSquare, ArrowUp, CheckCircle, ClipboardList, ChevronLeft, ChevronRight } from 'lucide-react'
 import { toast } from 'sonner'
+import { formatDistanceToNow } from 'date-fns'
 import type { ClusterHealth } from '@/lib/types'
 
 type Ticket = {
@@ -13,9 +14,15 @@ type Ticket = {
   incident_id: string | null
 }
 
-type Tab = 'maintenance' | 'cleaning' | 'move_in' | 'move_out'
+type DailyMessage = {
+  id: string; created_at: string; message_type: string; direction: string
+  content_text: string | null; sender_name: string | null; sent_at: string | null
+  metadata: Record<string, unknown> | null
+}
 
-const TAB_ICONS = { maintenance: Wrench, cleaning: Sparkles, move_in: LogIn, move_out: RefreshCw }
+type Tab = 'maintenance' | 'cleaning' | 'move_in' | 'move_out' | 'daily_log'
+
+const TAB_ICONS = { maintenance: Wrench, cleaning: Sparkles, move_in: LogIn, move_out: RefreshCw, daily_log: ClipboardList }
 const STATUS_COLORS: Record<string, string> = { active: '#4BB8F2', silent: '#9B6DFF', overdue: '#E05252', healthy: '#4BF2A2' }
 
 export function ClusterDetailPanel({ cluster: c, color, onClose }: { cluster: ClusterHealth; color: string; onClose: () => void }) {
@@ -83,20 +90,23 @@ export function ClusterDetailPanel({ cluster: c, color, onClose }: { cluster: Cl
 
       {/* Tabs */}
       <div className="flex border-b border-[#1A2035]">
-        {(['maintenance', 'cleaning', 'move_in', 'move_out'] as Tab[]).map(t => {
+        {(['maintenance', 'cleaning', 'move_in', 'move_out', 'daily_log'] as Tab[]).map(t => {
           const Icon = TAB_ICONS[t]
+          const label = t === 'daily_log' ? (c.today_compliance === 'compliant' ? '✅' : c.today_compliance === 'reminder_sent' ? '⏳' : c.today_compliance === 'non_compliant' ? '❌' : '📋') : String(counts[t as keyof typeof counts] ?? '')
           return (
             <button key={t} onClick={() => setTab(t)}
               className={`flex-1 flex items-center justify-center gap-1 py-2 text-[10px] transition-colors ${tab === t ? 'text-[#F2784B] border-b-2 border-[#F2784B]' : 'text-[#4B5A7A] hover:text-[#8A9BB8]'}`}>
-              <Icon size={11} /> {counts[t]}
+              <Icon size={11} /> {label}
             </button>
           )
         })}
       </div>
 
-      {/* Tickets */}
+      {/* Content */}
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
-        {loading ? (
+        {tab === 'daily_log' ? (
+          <DailyLogTab cluster={c.cluster} compliance={c.today_compliance ?? 'pending'} />
+        ) : loading ? (
           <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-16 bg-[#111D30] rounded-lg animate-pulse" />)}</div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center py-12 text-center">
@@ -158,6 +168,120 @@ export function ClusterDetailPanel({ cluster: c, color, onClose }: { cluster: Cl
               {sending ? 'Sending...' : `Send to ${c.cluster} →`}
             </button>
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DailyLogTab({ cluster, compliance }: { cluster: string; compliance: string }) {
+  const [messages, setMessages] = useState<DailyMessage[]>([])
+  const [dateOffset, setDateOffset] = useState(0)
+  const [loading, setLoading] = useState(true)
+
+  const targetDate = new Date()
+  targetDate.setDate(targetDate.getDate() + dateOffset)
+  const dateStr = targetDate.toISOString().split('T')[0]
+  const displayDate = targetDate.toLocaleDateString('en-MY', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })
+
+  useEffect(() => {
+    setLoading(true)
+    fetch(`/api/briefings/${cluster}/${dateStr}`)
+      .then(r => r.json())
+      .then(d => { if (d.ok) setMessages(d.messages ?? []) })
+      .catch(() => setMessages([]))
+      .finally(() => setLoading(false))
+  }, [cluster, dateStr])
+
+  const DIRECTION_STYLES: Record<string, { border: string; label: string; bg: string }> = {
+    outbound: { border: 'border-l-[#F2784B]', label: 'OUTBOUND ↑', bg: 'bg-[#F2784B]/5' },
+    inbound: { border: 'border-l-[#4BB8F2]', label: 'INBOUND ↓', bg: 'bg-[#4BB8F2]/5' },
+    internal: { border: 'border-l-[#9B6DFF]', label: 'INTERNAL 🔍', bg: 'bg-[#9B6DFF]/5' },
+  }
+
+  const TYPE_LABELS: Record<string, string> = {
+    pre_standup: 'Pre-Standup Brief', standup_report: 'IOE Standup Report',
+    reminder: 'Compliance Reminder', midday_scan: 'Midday Scan', evening_occ: 'Evening OCC',
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Date nav */}
+      <div className="flex items-center justify-between">
+        <button onClick={() => setDateOffset(d => d - 1)} className="p-1 text-[#4B5A7A] hover:text-[#E8EEF8]">
+          <ChevronLeft size={14} />
+        </button>
+        <div className="text-center">
+          <p className="text-xs text-[#E8EEF8]">{displayDate}</p>
+          <p className="text-[9px] text-[#4B5A7A]">
+            {compliance === 'compliant' ? '✅ Report submitted' :
+             compliance === 'reminder_sent' ? '⏳ Reminder sent' :
+             compliance === 'non_compliant' ? '❌ No report' : '⏳ Pending'}
+          </p>
+        </div>
+        <button onClick={() => setDateOffset(d => Math.min(0, d + 1))} disabled={dateOffset >= 0}
+          className="p-1 text-[#4B5A7A] hover:text-[#E8EEF8] disabled:opacity-30">
+          <ChevronRight size={14} />
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="space-y-2">{[1, 2].map(i => <div key={i} className="h-20 bg-[#111D30] rounded-lg animate-pulse" />)}</div>
+      ) : messages.length === 0 ? (
+        <div className="text-center py-12">
+          <ClipboardList size={24} className="text-[#1A2035] mx-auto mb-2" />
+          <p className="text-xs text-[#4B5A7A]">No daily log entries for this date</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {[...messages].reverse().map(msg => {
+            const dir = msg.direction === 'outbound' && msg.message_type === 'midday_scan' ? 'internal' : msg.direction
+            const style = DIRECTION_STYLES[dir] ?? DIRECTION_STYLES.outbound
+            const timeStr = msg.sent_at ? new Date(msg.sent_at).toLocaleTimeString('en-MY', { hour: '2-digit', minute: '2-digit' }) : ''
+
+            return (
+              <div key={msg.id} className={`${style.bg} border-l-2 ${style.border} rounded-r-lg p-3`}>
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[9px] text-[#8A9BB8]">{timeStr}</span>
+                    <span className="text-[9px] font-medium text-[#E8EEF8]">{TYPE_LABELS[msg.message_type] ?? msg.message_type}</span>
+                  </div>
+                  <span className="text-[8px] text-[#4B5A7A]">{style.label}</span>
+                </div>
+                {msg.sender_name && msg.direction === 'inbound' && (
+                  <p className="text-[9px] text-[#4BB8F2] mb-1">{msg.sender_name}
+                    {(msg.metadata as Record<string, unknown> | null)?.confidence ? ` · Confidence: ${String((msg.metadata as Record<string, unknown>).confidence)}%` : ''}
+                  </p>
+                )}
+                <p className="text-[10px] text-[#E8EEF8] leading-relaxed whitespace-pre-wrap line-clamp-6">
+                  {msg.content_text?.slice(0, 500)}
+                </p>
+                {msg.content_text && msg.content_text.length > 500 && (
+                  <button className="text-[9px] text-[#F2784B] mt-1">Show more...</button>
+                )}
+
+                {/* Show extracted data for standup reports */}
+                {msg.message_type === 'standup_report' && msg.metadata && typeof msg.metadata === 'object' && 'extracted' in msg.metadata && (
+                  <div className="mt-2 bg-[#080E1C] rounded p-2 text-[9px] text-[#8A9BB8]">
+                    <p className="text-[#9B6DFF] mb-1">AI Extracted:</p>
+                    {(() => {
+                      const ext = (msg.metadata as Record<string, unknown>).extracted as Record<string, unknown>
+                      const mi = ext.move_in as Record<string, unknown> | undefined
+                      const mo = ext.move_out as Record<string, unknown> | undefined
+                      return (
+                        <>
+                          {mi && <p>Move In: {String(mi.count ?? 0)} ({(mi.units as string[])?.join(', ') || 'none'})</p>}
+                          {mo && <p>Move Out: {String(mo.count ?? 0)}</p>}
+                          {(ext.tech_tasks as string[])?.length > 0 && <p>Tech: {(ext.tech_tasks as string[]).join(', ')}</p>}
+                          {(ext.risks as string[])?.length > 0 && <p className="text-[#E8A838]">Risks: {(ext.risks as string[]).join(', ')}</p>}
+                        </>
+                      )
+                    })()}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
