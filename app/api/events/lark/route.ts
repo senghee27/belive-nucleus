@@ -25,10 +25,18 @@ async function processLarkWebhook(body: Record<string, unknown>) {
     const chatType = message.chat_type as string // 'p2p' or 'group'
     const rawContent = message.content as string
 
-    // Parse content
+    // Parse content + resolve @mentions
     let content: string
     try { content = JSON.parse(rawContent).text ?? rawContent } catch { content = rawContent }
     if (!content?.trim()) return
+
+    // Resolve @_user_N mentions to real names from payload
+    const mentions = message.mentions as Array<{ key: string; id: Record<string, string>; name: string }> | undefined
+    if (mentions?.length) {
+      for (const m of mentions) {
+        if (m.key && m.name) content = content.replaceAll(m.key, `@${m.name}`)
+      }
+    }
 
     // Extract sender info
     const senderId = sender?.sender_id as Record<string, unknown> | undefined
