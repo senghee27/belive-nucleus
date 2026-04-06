@@ -9,7 +9,9 @@ const IOE_MAP: Record<string, string> = {
   C6: 'Intan', C7: 'Mardhiah', C8: 'Mardhiah', C9: 'Intan', C10: 'Nureen', C11: 'Airen',
 }
 
-export async function checkAndRemindNonCompliant(): Promise<{ reminded: number }> {
+export async function checkAndRemindNonCompliant(triggeredBy: 'cron' | 'manual' = 'cron', triggeredByUser?: string): Promise<{ reminded: number }> {
+  const { startCronRun, completeCronRun } = await import('./cron-logger')
+  const runId = await startCronRun({ report_type: 'COMPLIANCE_ALERT', triggered_by: triggeredBy, triggered_by_user: triggeredByUser })
   const today = new Date().toISOString().split('T')[0]
   let reminded = 0
 
@@ -50,6 +52,7 @@ export async function checkAndRemindNonCompliant(): Promise<{ reminded: number }
     if (sent) reminded++
   }
 
+  await completeCronRun(runId, { status: reminded > 0 ? 'success' : 'skipped', skip_reason: reminded === 0 ? 'no_non_compliant_clusters' : undefined })
   return { reminded }
 }
 

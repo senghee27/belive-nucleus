@@ -215,6 +215,52 @@ export type BriefingAutosendConfig = {
   auto_send_eligible: boolean
 }
 
+export type BriefingCronRun = {
+  id: string
+  created_at: string
+  report_type: string
+  cluster: string | null
+  triggered_by: 'cron' | 'manual' | 'retry'
+  triggered_by_user: string | null
+  started_at: string
+  completed_at: string | null
+  duration_seconds: number | null
+  status: 'running' | 'success' | 'failed' | 'skipped'
+  error_message: string | null
+  retry_count: number
+  report_id: string | null
+  sources_attempted: { name: string; type: string }[]
+  sources_succeeded: { name: string; type: string; record_count?: number; completed_at?: string }[]
+  sources_failed: { name: string; type: string; error?: string }[]
+  tokens_used: number | null
+  model: string | null
+  skip_reason: string | null
+}
+
+export type BriefingScheduleConfig = {
+  id: string
+  updated_at: string
+  report_type: string
+  report_name: string
+  report_icon: string
+  category: 'daily' | 'cluster' | 'management' | 'on_demand'
+  enabled: boolean
+  cron_expression: string | null
+  schedule_description: string | null
+  timezone: string
+  is_per_cluster: boolean
+  default_destinations: { chat_id: string; name: string; type: string; selected: boolean }[]
+  last_run_at: string | null
+  last_run_status: string | null
+  last_report_id: string | null
+  next_run_at: string | null
+  total_runs: number
+  successful_runs: number
+  failed_runs: number
+  success_rate: number
+  recent_runs?: BriefingCronRun[]
+}
+
 export const REPORT_TYPE_META: Record<string, { icon: string; label: string; group: string }> = {
   MORNING_BRIEF: { icon: '🌅', label: 'Morning Brief', group: 'daily' },
   MIDDAY_PULSE: { icon: '☀️', label: 'Midday Pulse', group: 'daily' },

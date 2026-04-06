@@ -58,9 +58,10 @@ export async function generateOCCCard(cluster: string, chatId: string): Promise<
   return { cardJson, textSummary: occText }
 }
 
-export async function sendEveningOCCs(targetClusters?: string[], testChatId?: string): Promise<Record<string, { sent: boolean }>> {
+export async function sendEveningOCCs(targetClusters?: string[], testChatId?: string, triggeredBy: 'cron' | 'manual' = 'cron', triggeredByUser?: string): Promise<Record<string, { sent: boolean }>> {
   const results: Record<string, { sent: boolean }> = {}
   const today = new Date().toISOString().split('T')[0]
+  const { startCronRun, completeCronRun } = await import('./cron-logger')
 
   let clusters: { cluster: string; chat_id: string }[] = []
   if (targetClusters) {
@@ -72,6 +73,7 @@ export async function sendEveningOCCs(targetClusters?: string[], testChatId?: st
   }
 
   for (const { cluster, chat_id } of clusters) {
+    const runId = await startCronRun({ report_type: 'EOD_SUMMARY', cluster, triggered_by: triggeredBy, triggered_by_user: triggeredByUser })
     try {
       const { getSafeChatId } = await import('@/lib/lark')
       const sendTo = getSafeChatId(testChatId ?? chat_id, 'chat_id')
@@ -143,8 +145,10 @@ export async function sendEveningOCCs(targetClusters?: string[], testChatId?: st
 
       await supabaseAdmin.from('cluster_health_cache').update({ occ_sent_today: true }).eq('cluster', cluster)
 
+      await completeCronRun(runId, { status: 'success', model: 'claude-sonnet-4-6' })
       results[cluster] = { sent }
     } catch (error) {
+      await completeCronRun(runId, { status: 'failed', error_message: error instanceof Error ? error.message : 'Unknown' })
       console.error(`[occ:${cluster}]`, error instanceof Error ? error.message : 'Unknown')
       results[cluster] = { sent: false }
     }

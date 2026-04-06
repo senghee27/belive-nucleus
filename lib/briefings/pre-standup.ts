@@ -67,7 +67,7 @@ export async function generateClusterBrief(cluster: string, chatId: string): Pro
   return { cardJson, textSummary: briefText }
 }
 
-export async function sendMorningBriefs(targetClusters?: string[], testChatId?: string): Promise<Record<string, { sent: boolean; report_id?: string }>> {
+export async function sendMorningBriefs(targetClusters?: string[], testChatId?: string, triggeredBy: 'cron' | 'manual' = 'cron', triggeredByUser?: string): Promise<Record<string, { sent: boolean; report_id?: string }>> {
   const results: Record<string, { sent: boolean; report_id?: string }> = {}
 
   // Get clusters to brief
@@ -82,7 +82,10 @@ export async function sendMorningBriefs(targetClusters?: string[], testChatId?: 
 
   const today = new Date().toISOString().split('T')[0]
 
+  const { startCronRun, completeCronRun } = await import('./cron-logger')
+
   for (const { cluster, chat_id } of clusters) {
+    const runId = await startCronRun({ report_type: 'STANDUP_BRIEF', cluster, triggered_by: triggeredBy, triggered_by_user: triggeredByUser })
     try {
       const { getSafeChatId } = await import('@/lib/lark')
       const sendTo = getSafeChatId(testChatId ?? chat_id, 'chat_id')
@@ -159,9 +162,16 @@ export async function sendMorningBriefs(targetClusters?: string[], testChatId?: 
       // Update cluster health
       await supabaseAdmin.from('cluster_health_cache').update({ brief_sent_today: true }).eq('cluster', cluster)
 
+      await completeCronRun(runId, {
+        status: 'success', report_id: reportId,
+        sources_succeeded: log.sources_read.map(s => ({ name: s.name, type: 'db', completed_at: s.scanned_at, record_count: s.record_count })),
+        model: 'claude-sonnet-4-6',
+      })
+
       results[cluster] = { sent, report_id: reportId }
       console.log(`[brief:${cluster}]`, sent ? 'Sent' : 'Failed')
     } catch (error) {
+      await completeCronRun(runId, { status: 'failed', error_message: error instanceof Error ? error.message : 'Unknown' })
       console.error(`[brief:${cluster}]`, error instanceof Error ? error.message : 'Unknown')
       results[cluster] = { sent: false }
     }

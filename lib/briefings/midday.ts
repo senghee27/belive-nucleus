@@ -6,7 +6,9 @@ import type { GenerationLog } from './report-generator'
 const aiClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 const LEE_OPEN_ID = process.env.LEE_LARK_CHAT_ID ?? ''
 
-export async function runMiddayScan(cluster: string): Promise<void> {
+export async function runMiddayScan(cluster: string, triggeredBy: 'cron' | 'manual' = 'cron', triggeredByUser?: string): Promise<void> {
+  const { startCronRun, completeCronRun } = await import('./cron-logger')
+  const runId = await startCronRun({ report_type: 'MIDDAY_PULSE', cluster, triggered_by: triggeredBy, triggered_by_user: triggeredByUser })
   try {
     const today = new Date().toISOString().split('T')[0]
 
@@ -77,7 +79,10 @@ export async function runMiddayScan(cluster: string): Promise<void> {
       generation_log: log,
       destinations: LEE_OPEN_ID ? [{ chat_id: LEE_OPEN_ID, name: 'Lee DM', type: 'lee_dm' as const, selected: true }] : [],
     })
+
+    await completeCronRun(runId, { status: 'success', tokens_used: msg.usage?.output_tokens ?? 0, model: 'claude-sonnet-4-6' })
   } catch (error) {
+    await completeCronRun(runId, { status: 'failed', error_message: error instanceof Error ? error.message : 'Unknown' })
     console.error(`[midday:${cluster}]`, error instanceof Error ? error.message : 'Unknown')
   }
 }

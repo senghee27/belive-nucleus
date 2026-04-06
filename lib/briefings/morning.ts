@@ -118,16 +118,32 @@ export async function generateMorningBriefing(cluster: string, _chatId: string):
   }
 }
 
-export async function sendMorningBriefings() {
-  const { content, log, destinations } = await generateMorningBriefContent()
-  const reportId = await generateReport({
-    report_type: 'MORNING_BRIEF',
-    report_name: 'Morning Intelligence Briefing',
-    scheduled_for: new Date(),
-    content,
-    generation_log: log,
-    destinations,
-  })
+export async function sendMorningBriefings(triggeredBy: 'cron' | 'manual' = 'cron', triggeredByUser?: string) {
+  const { startCronRun, completeCronRun } = await import('./cron-logger')
+  const runId = await startCronRun({ report_type: 'MORNING_BRIEF', triggered_by: triggeredBy, triggered_by_user: triggeredByUser })
 
-  return { report_id: reportId }
+  try {
+    const { content, log, destinations } = await generateMorningBriefContent()
+    const reportId = await generateReport({
+      report_type: 'MORNING_BRIEF',
+      report_name: 'Morning Intelligence Briefing',
+      scheduled_for: new Date(),
+      content,
+      generation_log: log,
+      destinations,
+    })
+
+    await completeCronRun(runId, {
+      status: 'success',
+      report_id: reportId,
+      sources_succeeded: log.sources_read.map(s => ({ name: s.name, type: 'db', completed_at: s.scanned_at, record_count: s.record_count })),
+      tokens_used: log.tokens_used,
+      model: log.model,
+    })
+
+    return { report_id: reportId, run_id: runId }
+  } catch (error) {
+    await completeCronRun(runId, { status: 'failed', error_message: error instanceof Error ? error.message : 'Unknown' })
+    throw error
+  }
 }
