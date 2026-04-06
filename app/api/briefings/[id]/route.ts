@@ -1,6 +1,48 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
+type Destination = {
+  chat_id: string
+  name: string
+  type: string
+  selected: boolean
+  display_name?: string
+  description?: string
+  icon?: string
+}
+
+async function resolveDestinations(destinations: Destination[]): Promise<Destination[]> {
+  const ouIds = destinations.filter(d => d.chat_id.startsWith('ou_')).map(d => d.chat_id)
+  const ocIds = destinations.filter(d => d.chat_id.startsWith('oc_')).map(d => d.chat_id)
+
+  const staffMap = new Map<string, string>()
+  const groupMap = new Map<string, { name: string; type: string }>()
+
+  if (ouIds.length > 0) {
+    const { data } = await supabaseAdmin.from('staff_directory').select('open_id, name').in('open_id', ouIds)
+    for (const s of data ?? []) staffMap.set(s.open_id, s.name)
+  }
+  if (ocIds.length > 0) {
+    const { data } = await supabaseAdmin.from('monitored_groups').select('chat_id, group_name, group_type').in('chat_id', ocIds)
+    for (const g of data ?? []) groupMap.set(g.chat_id, { name: g.group_name, type: g.group_type })
+  }
+
+  return destinations.map(d => {
+    if (d.chat_id.startsWith('ou_')) {
+      const staffName = staffMap.get(d.chat_id) ?? d.name
+      return { ...d, display_name: staffName, description: 'Personal DM', icon: 'user' }
+    }
+    if (d.chat_id.startsWith('oc_')) {
+      const group = groupMap.get(d.chat_id)
+      const groupName = group?.name ?? d.name
+      const groupType = group?.type ?? d.type
+      const desc = groupType === 'cluster' ? 'Cluster group' : groupType === 'ai_report' ? 'AI Report group' : groupType === 'function' ? 'Function group' : 'Group chat'
+      return { ...d, display_name: groupName, description: desc, icon: 'users' }
+    }
+    return { ...d, display_name: d.name, description: d.type, icon: 'users' }
+  })
+}
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -14,7 +56,10 @@ export async function GET(
       .single()
 
     if (error || !data) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-    return NextResponse.json({ ok: true, report: data })
+
+    // Resolve destination names
+    const resolved = await resolveDestinations((data.destinations as Destination[]) ?? [])
+    return NextResponse.json({ ok: true, report: { ...data, destinations: resolved } })
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Unknown' }, { status: 500 })
   }
