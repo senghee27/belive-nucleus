@@ -394,7 +394,7 @@ export async function getIncidents(filters?: {
     if (filters?.cluster) query = query.eq('cluster', filters.cluster)
     if (filters?.severity) query = query.eq('severity', filters.severity)
 
-    query = query.order('priority', { ascending: true }).order('created_at', { ascending: false })
+    query = query.order('created_at', { ascending: false })
 
     if (filters?.limit) query = query.limit(filters.limit)
 

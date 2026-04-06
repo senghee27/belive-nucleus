@@ -4,10 +4,20 @@ import { useEffect, useState, useMemo, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
-import { Search, LayoutList, LayoutGrid, X } from 'lucide-react'
+import { Search, LayoutList, LayoutGrid, X, Clock, AlertCircle, Timer, RefreshCw, MapPin, User } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import type { Incident, IncidentStats } from '@/lib/types'
 import { ISSUE_CATEGORIES } from '@/lib/types'
+
+const SORT_OPTIONS = [
+  { key: 'created_at_desc', label: 'Newest', icon: Clock },
+  { key: 'severity', label: 'Severity', icon: AlertCircle },
+  { key: 'age_desc', label: 'Longest', icon: Timer },
+  { key: 'updated_at_desc', label: 'Updated', icon: RefreshCw },
+  { key: 'cluster', label: 'Cluster', icon: MapPin },
+  { key: 'owner', label: 'Owner', icon: User },
+] as const
+type SortKey = typeof SORT_OPTIONS[number]['key']
 
 const SEV_COLORS: Record<string, string> = { RED: '#E05252', YELLOW: '#E8A838', GREEN: '#4BF2A2' }
 const CLUSTER_COLORS: Record<string, string> = { C1:'#F2784B',C2:'#9B6DFF',C3:'#4BB8F2',C4:'#4BF2A2',C5:'#E8A838',C6:'#F27BAD',C7:'#6DD5F2',C8:'#B46DF2',C9:'#F2C96D',C10:'#6DF2B4',C11:'#E05252' }
@@ -58,8 +68,9 @@ export function CommandCenter({ initialIncidents, initialStats }: { initialIncid
   const [catFilter, setCatFilter] = useState<string[]>(saved?.catFilter ?? [])
   const [priFilter, setPriFilter] = useState<string[]>(saved?.priFilter ?? [])
   const [statusFilter, setStatusFilter] = useState<string[]>(saved?.statusFilter ?? [])
-  const [sortBy, setSortBy] = useState<'severity' | 'created' | 'updated'>((saved?.sortBy as 'severity') ?? 'severity')
-  const [sortDir] = useState<'asc' | 'desc'>((saved?.sortDir as 'asc') ?? 'desc')
+  const [sortBy, setSortBy] = useState<SortKey>(() => {
+    try { return (sessionStorage.getItem('nucleus_command_sort') as SortKey) ?? 'created_at_desc' } catch { return 'created_at_desc' }
+  })
   const [activeStatPill, setActiveStatPill] = useState<string | null>(null)
   const [lastSelectedId] = useState<string | null>(saved?.lastSelectedId ?? null)
 
@@ -104,18 +115,53 @@ export function CommandCenter({ initialIncidents, initialStats }: { initialIncid
       const q = search.toLowerCase()
       list = list.filter(i => i.title.toLowerCase().includes(q) || i.raw_content.toLowerCase().includes(q) || (i.sender_name ?? '').toLowerCase().includes(q) || (i.cluster ?? '').toLowerCase().includes(q))
     }
+    const sevOrd: Record<string, number> = { RED: 0, YELLOW: 1, GREEN: 2 }
+    const priOrd: Record<string, number> = { P1: 0, P2: 1, P3: 2 }
+    const clusterOrd = (c: string | null) => {
+      if (!c) return 99
+      const n = parseInt(c.replace('C', ''))
+      return isNaN(n) ? 98 : n
+    }
+    const unresolvedStatuses = ['new', 'analysed', 'awaiting_lee', 'acting']
+
     list = [...list].sort((a, b) => {
-      if (sortBy === 'severity') {
-        const o: Record<string, number> = { RED: 0, YELLOW: 1, GREEN: 2 }
-        const diff = (o[a.severity] ?? 2) - (o[b.severity] ?? 2)
-        return diff !== 0 ? diff : new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      switch (sortBy) {
+        case 'created_at_desc':
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime() || (sevOrd[a.severity] ?? 2) - (sevOrd[b.severity] ?? 2)
+        case 'severity': {
+          const s = (sevOrd[a.severity] ?? 2) - (sevOrd[b.severity] ?? 2)
+          if (s !== 0) return s
+          const p = (priOrd[a.priority] ?? 2) - (priOrd[b.priority] ?? 2)
+          if (p !== 0) return p
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        }
+        case 'age_desc': {
+          const aUnresolved = unresolvedStatuses.includes(a.status) ? 0 : 1
+          const bUnresolved = unresolvedStatuses.includes(b.status) ? 0 : 1
+          if (aUnresolved !== bUnresolved) return aUnresolved - bUnresolved
+          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        }
+        case 'updated_at_desc':
+          return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+        case 'cluster': {
+          const co = clusterOrd(a.cluster) - clusterOrd(b.cluster)
+          if (co !== 0) return co
+          return (sevOrd[a.severity] ?? 2) - (sevOrd[b.severity] ?? 2)
+        }
+        case 'owner': {
+          const aName = a.sender_name ?? ''
+          const bName = b.sender_name ?? ''
+          if (!aName && bName) return 1
+          if (aName && !bName) return -1
+          const n = aName.localeCompare(bName)
+          if (n !== 0) return n
+          return (sevOrd[a.severity] ?? 2) - (sevOrd[b.severity] ?? 2)
+        }
+        default: return 0
       }
-      if (sortBy === 'created') return sortDir === 'desc' ? new Date(b.created_at).getTime() - new Date(a.created_at).getTime() : new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-      if (sortBy === 'updated') return sortDir === 'desc' ? new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime() : new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
-      return 0
     })
     return list
-  }, [incidents, sevFilter, clusterFilter, catFilter, priFilter, statusFilter, search, sortBy, sortDir])
+  }, [incidents, sevFilter, clusterFilter, catFilter, priFilter, statusFilter, search, sortBy])
 
   function toggleFilter(arr: string[], val: string, setter: (v: string[]) => void) {
     setter(arr.includes(val) ? arr.filter(v => v !== val) : [...arr, val])
@@ -138,10 +184,10 @@ export function CommandCenter({ initialIncidents, initialStats }: { initialIncid
   const handleRowClick = useCallback((id: string) => {
     saveCommandState({
       sevFilter, clusterFilter, catFilter, priFilter, statusFilter, search, view,
-      sortBy, sortDir, scrollY: window.scrollY, lastSelectedId: id,
+      sortBy, sortDir: 'desc', scrollY: window.scrollY, lastSelectedId: id,
     })
     router.push(`/command/${id}`)
-  }, [sevFilter, clusterFilter, catFilter, priFilter, statusFilter, search, view, sortBy, sortDir, router])
+  }, [sevFilter, clusterFilter, catFilter, priFilter, statusFilter, search, view, sortBy, router])
 
   const statPills = [
     { label: 'New', count: (stats.by_status?.new ?? 0) + (stats.by_status?.analysed ?? 0), color: '#E05252' },
@@ -239,13 +285,26 @@ export function CommandCenter({ initialIncidents, initialStats }: { initialIncid
             <button onClick={() => setView('table')} className={`px-2 py-1 ${view === 'table' ? 'bg-[#F2784B]/15 text-[#F2784B]' : 'text-[#4B5A7A]'}`}><LayoutList size={13} /></button>
             <button onClick={() => setView('grouped')} className={`px-2 py-1 ${view === 'grouped' ? 'bg-[#F2784B]/15 text-[#F2784B]' : 'text-[#4B5A7A]'}`}><LayoutGrid size={13} /></button>
           </div>
-          <select value={sortBy} onChange={e => setSortBy(e.target.value as 'severity' | 'created' | 'updated')}
-            className="bg-[#080E1C] border border-[#1A2035] rounded-lg text-[10px] text-[#8A9BB8] px-2 py-1">
-            <option value="severity">Sort: Severity</option>
-            <option value="created">Sort: Created</option>
-            <option value="updated">Sort: Updated</option>
-          </select>
         </div>
+      </div>
+
+      {/* Sort tabs */}
+      <div className="flex flex-wrap gap-1.5">
+        {SORT_OPTIONS.map(opt => {
+          const isActive = sortBy === opt.key
+          const Icon = opt.icon
+          return (
+            <button key={opt.key} onClick={() => { setSortBy(opt.key); try { sessionStorage.setItem('nucleus_command_sort', opt.key) } catch {} }}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium border transition-colors ${
+                isActive
+                  ? 'bg-[#F2784B]/15 border-[#F2784B]/40 text-[#F2784B]'
+                  : 'bg-transparent border-[#1A2035] text-[#4B5A7A] hover:bg-[#0A1020] hover:text-[#E8EEF8]'
+              }`}>
+              <Icon size={14} />
+              {opt.label}
+            </button>
+          )
+        })}
       </div>
 
       {/* CSS for row flash animation */}
@@ -259,7 +318,7 @@ export function CommandCenter({ initialIncidents, initialStats }: { initialIncid
 
       {/* Table or Grouped */}
       {view === 'table' ? (
-        <WarRoomTable incidents={filtered} onRowClick={handleRowClick} />
+        <WarRoomTable incidents={filtered} onRowClick={handleRowClick} sortKey={sortBy} />
       ) : (
         <GroupedView incidents={filtered} onRowClick={handleRowClick} />
       )}
@@ -267,9 +326,15 @@ export function CommandCenter({ initialIncidents, initialStats }: { initialIncid
   )
 }
 
-function WarRoomTable({ incidents, onRowClick }: { incidents: Incident[]; onRowClick: (id: string) => void }) {
+function WarRoomTable({ incidents, onRowClick, sortKey }: { incidents: Incident[]; onRowClick: (id: string) => void; sortKey?: string }) {
   if (incidents.length === 0) {
     return <div className="text-center py-16 text-xs text-[#4B5A7A]">No incidents match filters</div>
+  }
+
+  // When sort=cluster, find the boundary between clustered and cluster-less
+  let clusterDividerIdx = -1
+  if (sortKey === 'cluster') {
+    clusterDividerIdx = incidents.findIndex(i => !i.cluster)
   }
 
   return (
@@ -292,7 +357,22 @@ function WarRoomTable({ incidents, onRowClick }: { incidents: Incident[]; onRowC
             </tr>
           </thead>
           <tbody>
-            {incidents.map(inc => <IncidentRow key={inc.id} incident={inc} onClick={() => onRowClick(inc.id)} />)}
+            {incidents.map((inc, idx) => (
+              <>
+                {idx === clusterDividerIdx && clusterDividerIdx > 0 && (
+                  <tr key="cluster-divider">
+                    <td colSpan={11} className="py-1.5 px-4">
+                      <div className="flex items-center gap-2 text-[10px] text-[#E05252]">
+                        <span className="flex-1 h-px bg-[#E05252]/30" />
+                        <span>No cluster assigned</span>
+                        <span className="flex-1 h-px bg-[#E05252]/30" />
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                <IncidentRow key={inc.id} incident={inc} onClick={() => onRowClick(inc.id)} />
+              </>
+            ))}
           </tbody>
         </table>
       </div>
@@ -320,7 +400,11 @@ function IncidentRow({ incident: i, onClick }: { incident: Incident; onClick: ()
         <span className={`block w-2 h-2 rounded-full ${i.priority === 'P1' ? 'animate-pulse' : ''}`} style={{ backgroundColor: SEV_COLORS[i.severity] ?? '#4B5A7A' }} />
       </td>
       <td className="p-2">
-        {i.cluster && <span className="text-[10px] font-[family-name:var(--font-jetbrains-mono)] font-bold px-1.5 py-0.5 rounded" style={{ color: CLUSTER_COLORS[i.cluster], backgroundColor: (CLUSTER_COLORS[i.cluster] ?? '#4B5A7A') + '15' }}>{i.cluster}</span>}
+        {i.cluster ? (
+          <span className="text-[10px] font-[family-name:var(--font-jetbrains-mono)] font-bold px-1.5 py-0.5 rounded" style={{ color: CLUSTER_COLORS[i.cluster], backgroundColor: (CLUSTER_COLORS[i.cluster] ?? '#4B5A7A') + '15' }}>{i.cluster}</span>
+        ) : (
+          <span className="text-[10px] font-[family-name:var(--font-jetbrains-mono)] font-bold px-1.5 py-0.5 rounded border border-[#E05252] bg-[#E05252]/10 text-[#E05252]" title="No cluster assigned — needs triage">—</span>
+        )}
       </td>
       <td className="p-2">
         <span className="text-[11px] font-[family-name:var(--font-jetbrains-mono)] text-[#8A9BB8]">{unit}</span>
