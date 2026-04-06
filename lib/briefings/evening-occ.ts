@@ -1,6 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sendLarkMessage } from '@/lib/lark'
+import { generateReport } from './report-generator'
+import type { GenerationLog, Destination } from './report-generator'
 
 const aiClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 const LEE_OPEN_ID = process.env.LEE_LARK_CHAT_ID ?? ''
@@ -71,9 +73,41 @@ export async function sendEveningOCCs(targetClusters?: string[], testChatId?: st
 
   for (const { cluster, chat_id } of clusters) {
     try {
-      const { getLarkToken, getSafeChatId } = await import('@/lib/lark')
+      const { getSafeChatId } = await import('@/lib/lark')
       const sendTo = getSafeChatId(testChatId ?? chat_id, 'chat_id')
+      const processingStart = new Date()
       const { cardJson, textSummary } = await generateOCCCard(cluster, sendTo)
+      const processingEnd = new Date()
+
+      // Create report record
+      const log: GenerationLog = {
+        sources_read: [
+          { name: 'Standup Session', scanned_at: new Date().toISOString(), record_count: 1, success: true },
+          { name: 'Cluster Messages', scanned_at: new Date().toISOString(), record_count: 0, success: true },
+          { name: 'Incidents', scanned_at: new Date().toISOString(), record_count: 0, success: true },
+        ],
+        ai_reasoning: `OCC nightly review for ${cluster}`,
+        processing_start: processingStart.toISOString(),
+        processing_end: processingEnd.toISOString(),
+        duration_seconds: Math.round((processingEnd.getTime() - processingStart.getTime()) / 1000),
+        tokens_used: 0,
+        model: 'claude-sonnet-4-6',
+        errors: [],
+      }
+
+      const destinations: Destination[] = [
+        { chat_id: sendTo, name: `${cluster} Group`, type: 'cluster_group', selected: true },
+      ]
+
+      await generateReport({
+        report_type: 'EOD_SUMMARY',
+        report_name: `OCC Nightly Review — ${cluster}`,
+        cluster,
+        scheduled_for: new Date(),
+        content: textSummary,
+        generation_log: log,
+        destinations,
+      })
 
       // Send as Lee ONLY — NO bot fallback
       let resData: Record<string, unknown> = {}

@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Home, Zap, LayoutGrid, Clock, User, DollarSign, Settings, Code, Brain, Wrench, Activity, LogOut, Radio } from 'lucide-react'
+import { Home, Zap, LayoutGrid, Clock, User, DollarSign, Settings, Code, Brain, Wrench, Activity, LogOut, Radio, FileText } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
@@ -18,6 +18,7 @@ const NAV_ITEMS = [
   { href: '/cto', icon: Code, label: 'CTO', color: '#4BF2A2' },
   { href: '/memory', icon: Brain, label: 'Memory' },
   { href: '/watchdog', icon: Radio, label: 'Watchdog', showErrorBadge: true },
+  { href: '/briefings', icon: FileText, label: 'Briefings', showDraftBadge: true },
   { href: '/settings', icon: Wrench, label: 'Settings' },
 ]
 
@@ -26,6 +27,7 @@ export function Sidebar() {
   const [badgeCount, setBadgeCount] = useState(0)
   const [redClusters, setRedClusters] = useState(0)
   const [errorCount, setErrorCount] = useState(0)
+  const [draftCount, setDraftCount] = useState(0)
 
   useEffect(() => {
     supabase.from('incidents').select('id', { count: 'exact', head: true })
@@ -38,6 +40,9 @@ export function Sidebar() {
     supabase.from('nucleus_activity_log').select('id', { count: 'exact', head: true })
       .eq('event_type', 'ERROR').gte('created_at', today.toISOString())
       .then(({ count }) => setErrorCount(count ?? 0))
+    supabase.from('briefing_reports').select('id', { count: 'exact', head: true })
+      .eq('status', 'draft')
+      .then(({ count }) => setDraftCount(count ?? 0))
 
     const channel = supabase.channel('sidebar-all')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'incidents' }, () => {
@@ -49,6 +54,11 @@ export function Sidebar() {
         supabase.from('cluster_health_cache').select('id', { count: 'exact', head: true })
           .eq('health_status', 'red')
           .then(({ count }) => setRedClusters(count ?? 0))
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'briefing_reports' }, () => {
+        supabase.from('briefing_reports').select('id', { count: 'exact', head: true })
+          .eq('status', 'draft')
+          .then(({ count }) => setDraftCount(count ?? 0))
       })
       .subscribe()
 
@@ -83,6 +93,11 @@ export function Sidebar() {
                 {'showErrorBadge' in item && item.showErrorBadge && errorCount > 0 && (
                   <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 flex items-center justify-center rounded-full bg-[#E05252] text-white text-[9px] font-bold px-1">
                     {errorCount}
+                  </span>
+                )}
+                {'showDraftBadge' in item && item.showDraftBadge && draftCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 flex items-center justify-center rounded-full bg-[#E8A838] text-white text-[9px] font-bold px-1">
+                    {draftCount}
                   </span>
                 )}
               </Link>

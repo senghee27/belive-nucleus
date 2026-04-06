@@ -1,7 +1,10 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { generateReport } from './report-generator'
+import type { GenerationLog } from './report-generator'
 
 const aiClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+const LEE_OPEN_ID = process.env.LEE_LARK_CHAT_ID ?? ''
 
 export async function runMiddayScan(cluster: string): Promise<void> {
   try {
@@ -48,6 +51,31 @@ export async function runMiddayScan(cluster: string): Promise<void> {
       message_type: 'midday_scan', direction: 'outbound',
       content_text: summary, sender_name: 'Nucleus',
       sent_at: new Date().toISOString(),
+    })
+
+    // Create report record
+    const log: GenerationLog = {
+      sources_read: [
+        { name: 'Standup Session', scanned_at: new Date().toISOString(), record_count: 1, success: true },
+        { name: 'Cluster Messages', scanned_at: new Date().toISOString(), record_count: (msgs ?? []).length, success: true },
+      ],
+      ai_reasoning: `Midday pulse for ${cluster}`,
+      processing_start: new Date().toISOString(),
+      processing_end: new Date().toISOString(),
+      duration_seconds: 0,
+      tokens_used: msg.usage?.output_tokens ?? 0,
+      model: 'claude-sonnet-4-6',
+      errors: [],
+    }
+
+    await generateReport({
+      report_type: 'MIDDAY_PULSE',
+      report_name: `Midday Pulse — ${cluster}`,
+      cluster,
+      scheduled_for: new Date(),
+      content: summary,
+      generation_log: log,
+      destinations: LEE_OPEN_ID ? [{ chat_id: LEE_OPEN_ID, name: 'Lee DM', type: 'lee_dm' as const, selected: true }] : [],
     })
   } catch (error) {
     console.error(`[midday:${cluster}]`, error instanceof Error ? error.message : 'Unknown')

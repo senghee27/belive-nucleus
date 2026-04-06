@@ -157,3 +157,74 @@ export const ISSUE_CATEGORIES: Record<string, { label: string; icon: string; col
   complaint: { label: 'Complaint', icon: '📣', color: '#F27BAD' },
   other: { label: 'Other', icon: '❓', color: '#4B5A7A' },
 }
+
+export type BriefingReportStatus = 'draft' | 'pending_review' | 'approved' | 'sent' | 'failed' | 'discarded'
+
+export type BriefingDestination = {
+  chat_id: string
+  name: string
+  type: 'cluster_group' | 'function_group' | 'lee_dm' | 'ai_report'
+  selected: boolean
+}
+
+export type BriefingGenerationLog = {
+  sources_read: { name: string; scanned_at: string; record_count: number; success: boolean }[]
+  ai_reasoning: string
+  processing_start: string
+  processing_end: string
+  duration_seconds: number
+  tokens_used: number
+  model: string
+  errors: string[]
+}
+
+export type BriefingReport = {
+  id: string
+  created_at: string
+  updated_at: string
+  report_type: string
+  report_name: string
+  cluster: string | null
+  scheduled_for: string | null
+  generated_at: string | null
+  content: string
+  content_original: string
+  generation_log: BriefingGenerationLog
+  destinations: BriefingDestination[]
+  status: BriefingReportStatus
+  lee_edited: boolean
+  lee_approved_at: string | null
+  sent_at: string | null
+  sent_to: { chat_id: string; name: string; success: boolean; error?: string }[] | null
+  send_error: string | null
+  was_auto_sent: boolean
+}
+
+export type BriefingAutosendConfig = {
+  id: string
+  updated_at: string
+  report_type: string
+  auto_send_enabled: boolean
+  consecutive_approvals: number
+  total_approvals: number
+  total_reviews: number
+  approval_rate: number
+  last_approved_at: string | null
+  last_sent_at: string | null
+  required_consecutive_approvals: number
+  auto_send_eligible: boolean
+}
+
+export const REPORT_TYPE_META: Record<string, { icon: string; label: string; group: string }> = {
+  MORNING_BRIEF: { icon: '🌅', label: 'Morning Brief', group: 'daily' },
+  MIDDAY_PULSE: { icon: '☀️', label: 'Midday Pulse', group: 'daily' },
+  EOD_SUMMARY: { icon: '🌙', label: 'EOD Summary', group: 'daily' },
+  STANDUP_BRIEF: { icon: '📋', label: 'Standup Brief', group: 'cluster' },
+  COMPLIANCE_ALERT: { icon: '⚠️', label: 'Compliance Alert', group: 'cluster' },
+  WEEKLY_OPS: { icon: '📊', label: 'Weekly Ops', group: 'management' },
+  MONTHLY_REPORT: { icon: '📅', label: 'Monthly Report', group: 'management' },
+  OWNER_SATISFACTION: { icon: '🏠', label: 'Owner Satisfaction', group: 'management' },
+  CLUSTER_SNAPSHOT: { icon: '🔍', label: 'Cluster Snapshot', group: 'on_demand' },
+  INCIDENT_SUMMARY: { icon: '⚡', label: 'Incident Summary', group: 'on_demand' },
+  SALES_SNAPSHOT: { icon: '💰', label: 'Sales Snapshot', group: 'on_demand' },
+}

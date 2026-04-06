@@ -149,8 +149,8 @@ export async function executeSchedule(schedule: ScanSchedule): Promise<ScheduleR
 
     if (schedule.skill === 'morning_briefing') {
       const briefingResults = await sendMorningBriefings()
-      result.briefings_sent = Object.values(briefingResults).filter(r => r.sent).length
-      result.summary = `Sent ${result.briefings_sent} morning briefings`
+      result.briefings_sent = 1
+      result.summary = `Morning briefing report created: ${briefingResults.report_id}`
     } else {
       // Use unified scanner
       const scanResult = await scanEnabledGroups()

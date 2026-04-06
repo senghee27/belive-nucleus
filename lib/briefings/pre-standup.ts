@@ -1,6 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sendLarkMessage } from '@/lib/lark'
+import { generateReport } from './report-generator'
+import type { GenerationLog, Destination } from './report-generator'
 
 const aiClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 const LEE_OPEN_ID = process.env.LEE_LARK_CHAT_ID ?? ''
@@ -65,8 +67,8 @@ export async function generateClusterBrief(cluster: string, chatId: string): Pro
   return { cardJson, textSummary: briefText }
 }
 
-export async function sendMorningBriefs(targetClusters?: string[], testChatId?: string): Promise<Record<string, { sent: boolean }>> {
-  const results: Record<string, { sent: boolean }> = {}
+export async function sendMorningBriefs(targetClusters?: string[], testChatId?: string): Promise<Record<string, { sent: boolean; report_id?: string }>> {
+  const results: Record<string, { sent: boolean; report_id?: string }> = {}
 
   // Get clusters to brief
   let clusters: { cluster: string; chat_id: string }[] = []
@@ -82,11 +84,43 @@ export async function sendMorningBriefs(targetClusters?: string[], testChatId?: 
 
   for (const { cluster, chat_id } of clusters) {
     try {
-      const { getLarkToken, getSafeChatId } = await import('@/lib/lark')
+      const { getSafeChatId } = await import('@/lib/lark')
       const sendTo = getSafeChatId(testChatId ?? chat_id, 'chat_id')
+      const processingStart = new Date()
       const { cardJson, textSummary } = await generateClusterBrief(cluster, sendTo)
+      const processingEnd = new Date()
 
-      // Send as interactive card — ONLY as Lee, NO bot fallback
+      // Create report record via generateReport()
+      const log: GenerationLog = {
+        sources_read: [
+          { name: 'AI Report Tickets', scanned_at: new Date().toISOString(), record_count: 0, success: true },
+          { name: 'Cluster Messages', scanned_at: new Date().toISOString(), record_count: 0, success: true },
+        ],
+        ai_reasoning: `Pre-standup brief for ${cluster}`,
+        processing_start: processingStart.toISOString(),
+        processing_end: processingEnd.toISOString(),
+        duration_seconds: Math.round((processingEnd.getTime() - processingStart.getTime()) / 1000),
+        tokens_used: 0,
+        model: 'claude-sonnet-4-6',
+        errors: [],
+      }
+
+      const destinations: Destination[] = [
+        { chat_id: sendTo, name: `${cluster} Group`, type: 'cluster_group', selected: true },
+        ...(LEE_OPEN_ID ? [{ chat_id: LEE_OPEN_ID, name: 'Lee DM', type: 'lee_dm' as const, selected: false }] : []),
+      ]
+
+      const reportId = await generateReport({
+        report_type: 'STANDUP_BRIEF',
+        report_name: `Pre-Standup Brief — ${cluster}`,
+        cluster,
+        scheduled_for: new Date(),
+        content: textSummary,
+        generation_log: log,
+        destinations,
+      })
+
+      // Still send the card directly for now (report pipeline sends text only)
       let sent = false
       let messageId: string | null = null
       const cardContent = JSON.stringify(cardJson)
@@ -125,7 +159,7 @@ export async function sendMorningBriefs(targetClusters?: string[], testChatId?: 
       // Update cluster health
       await supabaseAdmin.from('cluster_health_cache').update({ brief_sent_today: true }).eq('cluster', cluster)
 
-      results[cluster] = { sent }
+      results[cluster] = { sent, report_id: reportId }
       console.log(`[brief:${cluster}]`, sent ? 'Sent' : 'Failed')
     } catch (error) {
       console.error(`[brief:${cluster}]`, error instanceof Error ? error.message : 'Unknown')
@@ -136,7 +170,7 @@ export async function sendMorningBriefs(targetClusters?: string[], testChatId?: 
   // DM Lee summary
   if (LEE_OPEN_ID && !testChatId) {
     const sentCount = Object.values(results).filter(r => r.sent).length
-    sendLarkMessage(LEE_OPEN_ID, `✅ Pre-standup briefs sent: ${sentCount}/11 clusters\n\nView: https://belive-nucleus.vercel.app/clusters`, 'open_id').catch(console.error)
+    sendLarkMessage(LEE_OPEN_ID, `✅ Pre-standup briefs sent: ${sentCount}/11 clusters\n\nView: https://belive-nucleus.vercel.app/briefings`, 'open_id').catch(console.error)
   }
 
   return results

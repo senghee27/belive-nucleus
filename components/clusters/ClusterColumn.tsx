@@ -1,7 +1,9 @@
 'use client'
 
-import { Wrench, Sparkles, LogIn, RefreshCw, MessageSquare } from 'lucide-react'
+import { Wrench, Sparkles, LogIn, RefreshCw, MessageSquare, RotateCw, Check, AlertCircle } from 'lucide-react'
 import type { ClusterHealth } from '@/lib/types'
+
+export type ClusterScanState = 'idle' | 'scanning' | 'done' | 'error'
 
 const STATUS_GLOW: Record<string, string> = {
   red: 'shadow-[0_0_20px_rgba(224,82,82,0.4)]',
@@ -17,8 +19,9 @@ const STATUS_DOT: Record<string, string> = {
   red: '#E05252', amber: '#E8A838', green: '#4BF2A2',
 }
 
-export function ClusterColumn({ cluster: c, color, selected, onClick }: {
+export function ClusterColumn({ cluster: c, color, selected, onClick, scanState = 'idle', onScan }: {
   cluster: ClusterHealth; color: string; selected: boolean; onClick: () => void
+  scanState?: ClusterScanState; onScan?: (cluster: string) => void
 }) {
   const silentLabel = c.cluster_silent_hours < 1 ? `${Math.round(c.cluster_silent_hours * 60)}m`
     : c.cluster_silent_hours < 24 ? `${Math.round(c.cluster_silent_hours)}h`
@@ -28,13 +31,30 @@ export function ClusterColumn({ cluster: c, color, selected, onClick }: {
     <button onClick={onClick}
       className={`w-[160px] shrink-0 bg-[#0D1525] border rounded-xl p-3 flex flex-col transition-all ${
         selected ? 'border-[#F2784B] scale-[1.02]' : STATUS_BORDER[c.health_status]
-      } ${STATUS_GLOW[c.health_status]} hover:scale-[1.01]`}>
+      } ${STATUS_GLOW[c.health_status]} hover:scale-[1.01] ${
+        scanState === 'scanning' ? 'border-[#4BB8F2] animate-pulse' : ''
+      } ${scanState === 'done' ? 'border-[#4BF2A2]' : ''}`}>
 
       {/* Header */}
       <div className="flex items-center gap-2 mb-2">
         <span className={`w-2.5 h-2.5 rounded-full ${c.health_status === 'red' ? 'animate-pulse' : ''}`}
           style={{ backgroundColor: STATUS_DOT[c.health_status] }} />
-        <span className="text-sm font-bold" style={{ color }}>{c.cluster}</span>
+        <span className="text-sm font-bold flex-1" style={{ color }}>{c.cluster}</span>
+        {onScan && (
+          <span
+            onClick={(e) => { e.stopPropagation(); if (scanState === 'idle' || scanState === 'done' || scanState === 'error') onScan(c.cluster) }}
+            className={`flex items-center justify-center w-5 h-5 rounded-md transition-colors ${
+              scanState === 'scanning' ? 'text-[#4BB8F2]' :
+              scanState === 'done' ? 'text-[#4BF2A2]' :
+              scanState === 'error' ? 'text-[#E05252]' :
+              'text-[#2A3550] hover:text-[#4BB8F2] hover:bg-[#111D30]'
+            }`}>
+            {scanState === 'scanning' ? <RotateCw size={11} className="animate-spin" /> :
+             scanState === 'done' ? <Check size={11} /> :
+             scanState === 'error' ? <AlertCircle size={11} /> :
+             <RotateCw size={11} />}
+          </span>
+        )}
       </div>
       <p className="text-[10px] text-[#4B5A7A] mb-1">{c.cluster_name}</p>
       <p className="text-lg font-bold font-[family-name:var(--font-jetbrains-mono)] mb-3"

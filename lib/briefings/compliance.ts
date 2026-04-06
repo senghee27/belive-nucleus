@@ -1,6 +1,8 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sendLarkMessage } from '@/lib/lark'
 import { createIncident } from '@/lib/incidents'
+import { generateReport } from './report-generator'
+import type { Destination } from './report-generator'
 
 const IOE_MAP: Record<string, string> = {
   C1: 'Nureen', C2: 'Intan', C3: 'Aireen', C4: 'Aliya', C5: 'Aliya',
@@ -21,6 +23,20 @@ export async function checkAndRemindNonCompliant(): Promise<{ reminded: number }
   for (const session of sessions ?? []) {
     const ioe = IOE_MAP[session.cluster] ?? 'Team'
     const msg = `${ioe} — standup report belum masuk. Boleh post bila free? 🙏`
+
+    // Create compliance alert report
+    const destinations: Destination[] = [
+      { chat_id: session.chat_id, name: `${session.cluster} Group`, type: 'cluster_group', selected: true },
+    ]
+    await generateReport({
+      report_type: 'COMPLIANCE_ALERT',
+      report_name: `Compliance Alert — ${session.cluster}`,
+      cluster: session.cluster,
+      scheduled_for: new Date(),
+      content: msg,
+      generation_log: { sources_read: [{ name: 'Standup Sessions', scanned_at: new Date().toISOString(), record_count: 1, success: true }], ai_reasoning: 'No standup report by deadline', processing_start: new Date().toISOString(), processing_end: new Date().toISOString(), duration_seconds: 0, tokens_used: 0, model: 'n/a', errors: [] },
+      destinations,
+    })
 
     const sent = await sendLarkMessage(session.chat_id, msg)
 
