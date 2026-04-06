@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
-import { RefreshCw, Copy, CheckCircle, ArrowUp, Archive, Send, X, ChevronDown, ChevronUp } from 'lucide-react'
+import { RefreshCw, Copy, CheckCircle, ArrowUp, Archive, Send, X, ChevronDown, ChevronUp, FlaskConical } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import type { Incident, IncidentTimeline } from '@/lib/types'
 
@@ -71,6 +71,17 @@ export function IncidentDetail({ incident, onDecide, onResolve, loading }: Props
       } else { toast.error(d.error ?? 'Failed to send') }
     } catch { toast.error('Failed to send') }
     finally { setSending(false) }
+  }
+
+  async function handleTestSend() {
+    const msg = replyText.trim() || proposal || incident.title
+    try {
+      await fetch(`/api/incidents/${incident.id}/test-send`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: msg }),
+      })
+      toast('🧪 Sent to Testing Group', { description: 'Real destination was NOT sent', style: { borderColor: '#9B6DFF', color: '#9B6DFF' }, duration: 4000 })
+    } catch { toast.error('Test send failed') }
   }
 
   function resolveName(openId: string | null): { name: string; role: string | null } {
@@ -232,6 +243,11 @@ export function IncidentDetail({ incident, onDecide, onResolve, loading }: Props
                 <button onClick={() => handleSend(false)} disabled={sending || !replyText.trim()}
                   className="flex-1 h-8 rounded-lg bg-[#F2784B]/10 text-[#F2784B] text-[10px] font-medium hover:bg-[#F2784B]/20 disabled:opacity-30 flex items-center justify-center gap-1">
                   <Send size={11} /> {sending ? '...' : 'Send Custom'}
+                </button>
+                <button onClick={handleTestSend}
+                  title="Send to Nucleus Testing Group — safe for testing"
+                  className="h-8 px-3 rounded-lg border border-[#2E4070] text-[#4B5A7A] text-[10px] hover:border-[#9B6DFF] hover:text-[#9B6DFF] transition-colors flex items-center gap-1">
+                  <FlaskConical size={11} /> Test
                 </button>
               </div>
             )}

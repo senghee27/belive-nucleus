@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, Send, Pencil, Trash2, RotateCcw, ChevronDown, ChevronUp, Check, X, AlertCircle, User, Users } from 'lucide-react'
+import { ArrowLeft, Send, Pencil, Trash2, RotateCcw, ChevronDown, ChevronUp, Check, X, AlertCircle, User, Users, FlaskConical } from 'lucide-react'
 import { toast } from 'sonner'
 import { REPORT_TYPE_META } from '@/lib/types'
 import type { BriefingReport, BriefingDestination, BriefingGenerationLog } from '@/lib/types'
@@ -86,6 +86,18 @@ export function ReportDetail({ reportId }: { reportId: string }) {
       await fetchReport()
     } catch { toast.error('Send failed') }
     finally { setSending(false) }
+  }
+
+  const handleTestSend = async () => {
+    if (!report) return
+    try {
+      await fetch('/api/test-send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: report.content }),
+      })
+      toast('🧪 Sent to Testing Group', { description: 'Real destination was NOT sent', style: { borderColor: '#9B6DFF', color: '#9B6DFF' }, duration: 4000 })
+    } catch { toast.error('Test send failed') }
   }
 
   const handleDiscard = async () => {
@@ -362,6 +374,11 @@ export function ReportDetail({ reportId }: { reportId: string }) {
               <Trash2 size={12} /> Discard
             </button>
           )}
+          <button onClick={handleTestSend}
+            title="Send to Nucleus Testing Group — safe for testing"
+            className="flex items-center gap-1.5 px-3 py-2.5 rounded-lg border border-[#2E4070] text-[#4B5A7A] text-xs hover:border-[#9B6DFF] hover:text-[#9B6DFF] transition-colors ml-auto">
+            <FlaskConical size={12} /> Test
+          </button>
         </div>
       )}
     </div>
