@@ -23,6 +23,7 @@ const SECRET_ROUTES = [
   '/api/watchdog',
   '/api/groups',
   '/api/staff',
+  '/api/push/send',
 ]
 
 export async function middleware(request: NextRequest) {
@@ -79,6 +80,26 @@ export async function middleware(request: NextRequest) {
   requestHeaders.set('x-user-open-id', session.open_id)
   requestHeaders.set('x-user-name', session.name)
   requestHeaders.set('x-user-role', session.role)
+
+  // Mobile detection + redirect
+  const ua = request.headers.get('user-agent') ?? ''
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(ua)
+
+  if (isMobile && !pathname.startsWith('/m') && !pathname.startsWith('/api') && !pathname.startsWith('/auth')) {
+    const mobileMap: Record<string, string> = {
+      '/': '/m',
+      '/overview': '/m',
+      '/command': '/m/queue',
+      '/clusters': '/m/clusters',
+      '/briefings': '/m/reports',
+    }
+    const mobilePath = mobileMap[pathname] ?? '/m'
+    return NextResponse.redirect(new URL(mobilePath, request.url))
+  }
+
+  if (!isMobile && pathname.startsWith('/m')) {
+    return NextResponse.redirect(new URL('/overview', request.url))
+  }
 
   return NextResponse.next({ request: { headers: requestHeaders } })
 }
