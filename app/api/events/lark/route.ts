@@ -50,12 +50,17 @@ async function processLarkWebhook(body: Record<string, unknown>) {
       : new Date().toISOString()
 
     if (chatType === 'group') {
+      // Resolve sender name from staff directory
+      const { resolveOpenId } = await import('@/lib/staff-directory')
+      const staff = await resolveOpenId(senderOpenId)
+      const resolvedName = staff?.name ?? senderOpenId
+
       await processGroupMessage({
         message_id: messageId,
         chat_id: chatId,
         content,
         sender_open_id: senderOpenId,
-        sender_name: senderOpenId, // Will be resolved if needed
+        sender_name: resolvedName,
         message_time: messageTime,
       })
     } else {

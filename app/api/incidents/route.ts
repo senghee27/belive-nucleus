@@ -1,5 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getIncidents, getIncidentStats, createIncident, analyseIncident, classifyMessage } from '@/lib/incidents'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+
+const OU_PATTERN = /^ou_[a-f0-9]+$/
+
+async function resolveStaffNames(incidents: Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
+  // Collect all ou_ IDs used as sender_name
+  const ouIds = new Set<string>()
+  for (const inc of incidents) {
+    const name = inc.sender_name as string | null
+    if (name && OU_PATTERN.test(name)) ouIds.add(name)
+  }
+  if (ouIds.size === 0) return incidents
+
+  const { data } = await supabaseAdmin.from('staff_directory').select('open_id, name').in('open_id', [...ouIds])
+  const map = new Map<string, string>()
+  for (const s of data ?? []) map.set(s.open_id, s.name)
+
+  return incidents.map(inc => {
+    const name = inc.sender_name as string | null
+    if (name && map.has(name)) return { ...inc, sender_name: map.get(name) }
+    return inc
+  })
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -14,7 +37,8 @@ export async function GET(req: NextRequest) {
     if (severity) filters.severity = severity
     if (limit) filters.limit = parseInt(limit)
 
-    const [incidents, stats] = await Promise.all([getIncidents(filters), getIncidentStats()])
+    const [rawIncidents, stats] = await Promise.all([getIncidents(filters), getIncidentStats()])
+    const incidents = await resolveStaffNames(rawIncidents as Record<string, unknown>[])
     return NextResponse.json({ ok: true, incidents, stats })
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Unknown' }, { status: 500 })
