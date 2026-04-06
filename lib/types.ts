@@ -123,6 +123,13 @@ export type ClusterHealth = {
   standup_report_at: string | null
   brief_sent_today: boolean
   occ_sent_today: boolean
+  ai_summary: string | null
+  ai_summary_generated_at: string | null
+  top_blockers: { id: string; title: string; category: string; age_days: number; owner_name: string; unit: string; sla_overdue: boolean }[]
+  top_maintenance: { id: string; title: string; category: string; age_days: number; owner_name: string; unit: string; sla_overdue: boolean }[]
+  top_cleaning: { id: string; title: string; category: string; age_days: number; owner_name: string; unit: string; sla_overdue: boolean }[]
+  top_movein: { id: string; title: string; category: string; age_days: number; owner_name: string; unit: string; sla_overdue: boolean }[]
+  top_moveout: { id: string; title: string; category: string; age_days: number; owner_name: string; unit: string; sla_overdue: boolean }[]
 }
 
 export type NucleusSession = {

@@ -144,6 +144,10 @@ export async function computeClusterHealth(cluster: string): Promise<void> {
       })
       .eq('cluster', cluster)
 
+    // Enrich with AI summary + top items
+    const { enrichClusterHealthCache } = await import('@/lib/clusters/generate-cluster-summary')
+    await enrichClusterHealthCache(cluster)
+
   } catch (error) {
     console.error(`[health:${cluster}]`, error instanceof Error ? error.message : 'Unknown')
   }
