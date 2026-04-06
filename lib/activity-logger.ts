@@ -16,6 +16,14 @@ interface LogEntry {
   error_message?: string
 }
 
+async function resolveStaffName(openId: string): Promise<string> {
+  if (!openId || !openId.startsWith('ou_')) return openId
+  try {
+    const { data } = await supabaseAdmin.from('staff_directory').select('name').eq('open_id', openId).single()
+    return data?.name ?? openId
+  } catch { return openId }
+}
+
 async function log(entry: LogEntry): Promise<void> {
   try {
     await supabaseAdmin.from('nucleus_activity_log').insert({
@@ -28,12 +36,14 @@ async function log(entry: LogEntry): Promise<void> {
 }
 
 export const logger = {
-  messageReceived: (p: { messageId: string; senderName: string; cluster: string; groupName: string; chatId: string; contentPreview: string; contentLength: number; noisePassed: boolean }) =>
-    log({
+  messageReceived: async (p: { messageId: string; senderName: string; cluster: string; groupName: string; chatId: string; contentPreview: string; contentLength: number; noisePassed: boolean }) => {
+    const name = await resolveStaffName(p.senderName)
+    return log({
       event_type: 'MESSAGE_RECEIVED', cluster: p.cluster, group_name: p.groupName, chat_id: p.chatId, lark_message_id: p.messageId,
-      summary: `${p.senderName} in ${p.groupName} — ${p.contentPreview.slice(0, 60)}`,
-      detail: { message_id: p.messageId, sender_name: p.senderName, content_preview: p.contentPreview, content_length: p.contentLength, noise_filter: p.noisePassed ? 'passed' : 'blocked' },
-    }),
+      summary: `${name} in ${p.groupName} — ${p.contentPreview.slice(0, 60)}`,
+      detail: { message_id: p.messageId, sender_name: name, content_preview: p.contentPreview, content_length: p.contentLength, noise_filter: p.noisePassed ? 'passed' : 'blocked' },
+    })
+  },
 
   aiClassified: (p: { inputContent: string; cluster: string; agent: string; category: string; severity: string; priority: string; confidence: number; isIncident: boolean; processingMs: number }) =>
     log({
