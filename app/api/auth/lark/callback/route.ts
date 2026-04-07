@@ -66,26 +66,32 @@ export async function GET(req: NextRequest) {
     }
 
     // Store tokens in lark_tokens table
-    // Deactivate old tokens first
+    // Deactivate ALL old user tokens (not just for this open_id — there's only 1 user)
     await supabaseAdmin.from('lark_tokens').update({ is_active: false })
-      .eq('token_type', 'user_access_token').eq('user_open_id', userOpenId)
+      .eq('token_type', 'user_access_token')
     await supabaseAdmin.from('lark_tokens').update({ is_active: false })
-      .eq('token_type', 'refresh_token').eq('user_open_id', userOpenId)
+      .eq('token_type', 'refresh_token')
 
-    await supabaseAdmin.from('lark_tokens').insert({
+    console.log('[auth:callback]', `Storing user token for ${userOpenId}, expires_in=${expires_in}, has_refresh=${!!refresh_token}`)
+
+    const { error: insertErr } = await supabaseAdmin.from('lark_tokens').insert({
       token_type: 'user_access_token', app_id: appId,
       token_value: access_token,
       expires_at: new Date(Date.now() + (expires_in ?? 7200) * 1000).toISOString(),
       user_open_id: userOpenId, is_active: true,
     })
+    if (insertErr) console.error('[auth:callback]', `Token insert failed: ${insertErr.message}`)
 
     if (refresh_token) {
-      await supabaseAdmin.from('lark_tokens').insert({
+      const { error: refreshErr } = await supabaseAdmin.from('lark_tokens').insert({
         token_type: 'refresh_token', app_id: appId,
         token_value: refresh_token,
         expires_at: new Date(Date.now() + 30 * 24 * 3600000).toISOString(),
         user_open_id: userOpenId, is_active: true,
       })
+      if (refreshErr) console.error('[auth:callback]', `Refresh token insert failed: ${refreshErr.message}`)
+    } else {
+      console.warn('[auth:callback]', 'No refresh_token in Lark response — token will expire without auto-renewal')
     }
 
     // Create JWT session
