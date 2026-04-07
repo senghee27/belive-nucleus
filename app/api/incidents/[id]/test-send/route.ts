@@ -25,6 +25,16 @@ export async function POST(
       }, { status: 401 })
     }
 
+    // Resolve @mentions before sending
+    const { detectMentionsInText } = await import('@/lib/staff-directory')
+    const mentions = await detectMentionsInText(message)
+    let larkContent = `[TEST] ${message}`
+    for (const m of mentions) {
+      const firstName = m.name.split(' ')[0]
+      const nameRegex = new RegExp(`\\b${firstName}\\b`, 'i')
+      larkContent = larkContent.replace(nameRegex, `<at user_id="${m.openId}">${firstName}</at>`)
+    }
+
     // Send directly to test group using Lee's token
     const { getSafeChatId } = await import('@/lib/lark')
     const safeChatId = getSafeChatId(TEST_CHAT_ID, 'chat_id')
@@ -37,7 +47,7 @@ export async function POST(
         body: JSON.stringify({
           receive_id: safeChatId,
           msg_type: 'text',
-          content: JSON.stringify({ text: `[TEST] ${message}` }),
+          content: JSON.stringify({ text: larkContent }),
         }),
       }
     )
