@@ -76,12 +76,19 @@ export function IncidentDetail({ incident, onDecide, onResolve, loading }: Props
   async function handleTestSend() {
     const msg = replyText.trim() || proposal || incident.title
     try {
-      await fetch(`/api/incidents/${incident.id}/test-send`, {
+      const res = await fetch(`/api/incidents/${incident.id}/test-send`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: msg }),
       })
-      toast('🧪 Sent to Testing Group', { description: 'Real destination was NOT sent', style: { borderColor: '#9B6DFF', color: '#9B6DFF' }, duration: 4000 })
-    } catch { toast.error('Test send failed') }
+      const d = await res.json()
+      if (d.ok) {
+        toast('🧪 Sent to Testing Group', { description: 'Real destination was NOT sent', style: { borderColor: '#9B6DFF', color: '#9B6DFF' }, duration: 4000 })
+      } else if (d.token_expired) {
+        toast.error('Token expired — please logout and re-login to refresh', { duration: 10000 })
+      } else {
+        toast.error(`Test send failed: ${d.error ?? 'Unknown error'}`)
+      }
+    } catch { toast.error('Test send failed — network error') }
   }
 
   function resolveName(openId: string | null): { name: string; role: string | null } {

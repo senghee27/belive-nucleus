@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { sendLarkMessage } from '@/lib/lark'
 
 const TEST_CHAT_ID = 'oc_585301f0077f09015428801da0cba90d'
 
@@ -9,8 +8,42 @@ export async function POST(req: NextRequest) {
     const message = body.message as string
     if (!message) return NextResponse.json({ error: 'Missing message' }, { status: 400 })
 
-    const sent = await sendLarkMessage(TEST_CHAT_ID, message)
-    return NextResponse.json({ ok: sent, sent_to: 'Nucleus Testing Group' })
+    // Get Lee's user token
+    let token: string
+    try {
+      const { getLeeUserToken } = await import('@/lib/lark-tokens')
+      token = await getLeeUserToken()
+    } catch {
+      return NextResponse.json({
+        error: 'Lee\'s Lark token expired. Please re-login at /auth/login.',
+        token_expired: true,
+      }, { status: 401 })
+    }
+
+    const { getSafeChatId } = await import('@/lib/lark')
+    const safeChatId = getSafeChatId(TEST_CHAT_ID, 'chat_id')
+
+    const res = await fetch(
+      'https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=chat_id',
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          receive_id: safeChatId,
+          msg_type: 'text',
+          content: JSON.stringify({ text: `[TEST] ${message.slice(0, 2000)}` }),
+        }),
+      }
+    )
+
+    const resData = await res.json()
+    const sent = resData.code === 0
+
+    if (!sent) {
+      return NextResponse.json({ ok: false, error: `Lark: ${resData.msg ?? resData.code}` })
+    }
+
+    return NextResponse.json({ ok: true, sent_to: 'Nucleus Testing Group' })
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Unknown' }, { status: 500 })
   }
