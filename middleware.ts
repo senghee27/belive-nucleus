@@ -24,6 +24,7 @@ const SECRET_ROUTES = [
   '/api/groups',
   '/api/staff',
   '/api/push/send',
+  '/api/backfill',
 ]
 
 export async function middleware(request: NextRequest) {
