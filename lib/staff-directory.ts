@@ -139,6 +139,88 @@ export async function detectMentionsInText(text: string): Promise<{ name: string
   return mentions
 }
 
+/**
+ * Sync staff by reading members of all monitored groups using Lee's user token.
+ * This catches users that the bot's contact:user.base:readonly scope cannot see
+ * (e.g. external users, privacy-restricted users) but who are active in cluster groups.
+ *
+ * The bot's tenant token can't read arbitrary users (code 41050), but Lee's user
+ * token can read any group he's in. This is the primary sync strategy.
+ */
+export async function syncStaffFromGroups(): Promise<{ synced: number; groups: number; errors: number }> {
+  try {
+    // Get Lee's user token
+    const { getLeeUserToken } = await import('./lark-tokens')
+    let userToken: string
+    try {
+      userToken = await getLeeUserToken()
+    } catch {
+      console.error('[staff:syncFromGroups]', 'No active Lee user token — skipping group sync')
+      return { synced: 0, groups: 0, errors: 1 }
+    }
+
+    // Get all monitored groups
+    const { data: groups } = await supabaseAdmin
+      .from('monitored_groups')
+      .select('chat_id, group_name')
+      .eq('scanning_enabled', true)
+
+    if (!groups || groups.length === 0) return { synced: 0, groups: 0, errors: 0 }
+
+    const allMembers = new Map<string, string>()
+    let errorCount = 0
+
+    for (const g of groups) {
+      let pageToken = ''
+      do {
+        const url = `${LARK_API}/open-apis/im/v1/chats/${g.chat_id}/members?member_id_type=open_id&page_size=100${pageToken ? `&page_token=${pageToken}` : ''}`
+        try {
+          const res = await fetch(url, { headers: { Authorization: `Bearer ${userToken}` } })
+          const data = await res.json()
+          if (data.code !== 0) {
+            console.error(`[staff:syncFromGroups:${g.group_name}]`, `${data.code} ${data.msg}`)
+            errorCount++
+            break
+          }
+          for (const m of data.data?.items ?? []) {
+            if (m.member_id && m.name) allMembers.set(m.member_id, m.name)
+          }
+          pageToken = data.data?.page_token ?? ''
+          if (!data.data?.has_more) pageToken = ''
+        } catch (error) {
+          console.error(`[staff:syncFromGroups:${g.group_name}]`, error instanceof Error ? error.message : 'Unknown')
+          errorCount++
+          break
+        }
+      } while (pageToken)
+    }
+
+    // Upsert all collected members
+    let synced = 0
+    const now = new Date().toISOString()
+    for (const [openId, name] of allMembers) {
+      const firstName = name.split(' ')[0]
+      const { error } = await supabaseAdmin.from('staff_directory').upsert({
+        open_id: openId,
+        name,
+        first_name: firstName,
+        last_synced_at: now,
+        is_active: true,
+      }, { onConflict: 'open_id' })
+      if (!error) synced++
+    }
+
+    // Invalidate in-memory cache so webhook handler picks up new entries
+    staffCache.clear()
+
+    console.log('[staff:syncFromGroups]', `Synced ${synced} members from ${groups.length} groups (${errorCount} errors)`)
+    return { synced, groups: groups.length, errors: errorCount }
+  } catch (error) {
+    console.error('[staff:syncFromGroups]', error instanceof Error ? error.message : 'Unknown')
+    return { synced: 0, groups: 0, errors: 1 }
+  }
+}
+
 export async function syncStaffFromLark(): Promise<{ synced: number }> {
   try {
     const token = await getLarkToken()
