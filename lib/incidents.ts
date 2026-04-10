@@ -468,13 +468,20 @@ export function extractKeywords(title: string, content: string): string[] {
   const text = `${title} ${content}`.toLowerCase()
   const keywords = new Set<string>()
 
-  const unitMatches = text.match(/\b[a-z]?\d+[-]?\d*[a-z]?\b/gi) ?? []
+  // Strict unit identifiers only: must have letter prefix or 2-segment hyphenated form
+  // Matches: B-15-06, A1-21-09, D-47-11, BLV-RQ-26000514
+  // Excludes: 1, 4, 50, 19-12 (only 2 segments without letter prefix), 25%
+  const unitMatches = text.match(/\b[a-z]\d?-\d{1,3}-\d{1,3}[a-z]?\b/gi) ?? []
   for (const u of unitMatches) keywords.add(u.toLowerCase())
 
-  const opsWords = ['ac', 'rosak', 'bocor', 'lift', 'electric', 'water', 'pipe', 'leak', 'flood', 'paip', 'lampu', 'lamp', 'sink', 'aircon', 'repair', 'contractor']
+  // Ticket ID format: BLV-RQ-26005216
+  const ticketMatches = text.match(/\bblv-rq-\d{6,}\b/gi) ?? []
+  for (const t of ticketMatches) keywords.add(t.toLowerCase())
+
+  const opsWords = ['rosak', 'bocor', 'leaking', 'flooding', 'aircon', 'paip', 'lampu', 'contractor']
   const propertyNames = ['vertica', 'epic', 'bayu', 'bora', 'vivo', 'rubica', 'acacia', 'astoria', 'platinum', 'avila', 'perla', 'azure', 'emporis', 'armani', 'highpark', 'meta', 'rica', 'birch', 'unio', 'arte', 'trion', 'razak', 'ooak', 'andes']
 
-  for (const w of text.split(/[\s,.\-—:;/()]+/).filter(w => w.length >= 2)) {
+  for (const w of text.split(/[\s,.\-—:;/()]+/).filter(w => w.length >= 4)) {
     if (opsWords.includes(w) || propertyNames.includes(w)) keywords.add(w)
   }
 

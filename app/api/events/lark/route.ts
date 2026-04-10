@@ -83,6 +83,10 @@ async function processLarkWebhook(body: Record<string, unknown>) {
       ? new Date(parseInt(message.create_time as string)).toISOString()
       : new Date().toISOString()
 
+    // Lark thread linkage — present when message is a reply in thread
+    const parentId = (message.parent_id as string) ?? null
+    const rootId = (message.root_id as string) ?? null
+
     if (chatType === 'group') {
       // Resolve sender name from staff directory
       const { resolveOpenId } = await import('@/lib/staff-directory')
@@ -96,6 +100,8 @@ async function processLarkWebhook(body: Record<string, unknown>) {
         sender_open_id: senderOpenId,
         sender_name: resolvedName,
         message_time: messageTime,
+        parent_id: parentId,
+        root_id: rootId,
       })
     } else {
       // p2p — direct bot message (existing flow)
@@ -114,6 +120,7 @@ async function processLarkWebhook(body: Record<string, unknown>) {
 async function processGroupMessage(payload: {
   message_id: string; chat_id: string; content: string
   sender_open_id: string; sender_name: string; message_time: string
+  parent_id?: string | null; root_id?: string | null
 }) {
   try {
     // 1. Check if monitored group
@@ -181,7 +188,15 @@ async function processGroupMessage(payload: {
     }
 
     // 6. Try to match to existing open incident
-    const matched = await matchMessageToIncident(payload.content, group.cluster)
+    //    Primary: Lark thread root_id (strict — same conversation thread)
+    //    Fallback: strict keyword + unit number match (only for non-thread messages)
+    const matched = await matchMessageToIncident(
+      payload.content,
+      group.cluster,
+      payload.chat_id,
+      payload.root_id ?? null,
+      payload.parent_id ?? null,
+    )
 
     if (matched) {
       await supabaseAdmin.from('incident_timeline').insert({
@@ -283,35 +298,106 @@ async function processDirectMessage(payload: {
   }
 }
 
-async function matchMessageToIncident(content: string, cluster: string | null) {
+// Strict unit number regex: requires letter prefix or 2-segment hyphenated form like B-15-06, A1-21-09, D-47-11
+// Excludes plain numbers like "1", "4", "50", or single segments like "19-12" without context
+const STRICT_UNIT_REGEX = /\b[A-Z]\d?-\d{1,3}-\d{1,3}[A-Z]?\b/gi
+
+// Stop words / generic terms that must NOT count as matching keywords
+const KEYWORD_STOPLIST = new Set([
+  '1', '2', '3', '4', '5', '6', '7', '8', '9', '0',
+  '10', '11', '12', '13', '14', '15', '20', '25', '30', '40', '50', '60', '70', '80', '90', '100',
+  'room', 'unit', 'floor', 'block', 'house', 'level',
+])
+
+function extractStrictUnitTokens(text: string): Set<string> {
+  const matches = text.match(STRICT_UNIT_REGEX) ?? []
+  return new Set(matches.map(m => m.toLowerCase()))
+}
+
+async function matchMessageToIncident(
+  content: string,
+  cluster: string | null,
+  chatId: string,
+  rootId: string | null,
+  parentId: string | null,
+) {
   try {
+    // PRIMARY MATCH: Lark thread root_id — same conversation thread, scoped to same chat
+    // This is the only reliable way to know two messages belong together
+    if (rootId || parentId) {
+      const threadAnchor = rootId ?? parentId!
+      // Look up incident whose source_message_id == threadAnchor (incident was created from the root)
+      const { data: byRoot } = await supabaseAdmin
+        .from('incidents')
+        .select('*')
+        .eq('chat_id', chatId)
+        .eq('source_message_id', threadAnchor)
+        .in('status', ['new', 'analysed', 'awaiting_lee', 'acting'])
+        .maybeSingle()
+      if (byRoot) return byRoot
+
+      // OR look up timeline entries that already linked to this thread
+      const { data: linkedTimeline } = await supabaseAdmin
+        .from('incident_timeline')
+        .select('incident_id')
+        .eq('lark_message_id', threadAnchor)
+        .limit(1)
+        .maybeSingle()
+      if (linkedTimeline?.incident_id) {
+        const { data: inc } = await supabaseAdmin
+          .from('incidents')
+          .select('*')
+          .eq('id', linkedTimeline.incident_id)
+          .in('status', ['new', 'analysed', 'awaiting_lee', 'acting'])
+          .maybeSingle()
+        if (inc) return inc
+      }
+      // Thread reply but no matching incident — do NOT fall through to keyword matching
+      // (it's a thread reply to something else, not a new keyword-correlated message)
+      return null
+    }
+
+    // FALLBACK MATCH: only for top-level (non-thread) messages
+    // Strict criteria: must match (a) ticket_id explicitly, OR (b) strict unit number from title
+    // Generic keywords / single digits / property names are NOT enough
     const { data: incidents } = await supabaseAdmin
       .from('incidents')
       .select('*')
       .in('status', ['new', 'analysed', 'awaiting_lee', 'acting'])
       .eq('cluster', cluster ?? '')
+      .eq('chat_id', chatId)  // also require same chat
       .order('created_at', { ascending: false })
       .limit(20)
 
     if (!incidents || incidents.length === 0) return null
 
+    const messageUnits = extractStrictUnitTokens(content)
     const lower = content.toLowerCase()
 
     for (const inc of incidents) {
-      // Match by thread_keywords
-      const keywords = inc.thread_keywords as string[] | null
-      if (keywords && keywords.length > 0) {
-        const matchCount = keywords.filter((kw: string) => lower.includes(kw.toLowerCase())).length
-        if (matchCount >= 2) return inc
-        if (matchCount >= 1 && keywords.length <= 3) return inc
-      }
-
-      // Match by ticket_id
+      // (a) Ticket ID match — strongest signal
       if (inc.ticket_id && content.includes(inc.ticket_id)) return inc
 
-      // Match by unit number from title
-      const unitMatch = inc.title.match(/[A-Z]-?\d{1,3}-?\d{1,3}/i)
-      if (unitMatch && lower.includes(unitMatch[0].toLowerCase())) return inc
+      // (b) Strict unit number match — requires the SAME structured unit (e.g., B-15-06)
+      // appearing in both the incident title/content AND the new message
+      const incidentUnits = new Set([
+        ...extractStrictUnitTokens(inc.title ?? ''),
+        ...extractStrictUnitTokens(inc.raw_content ?? ''),
+      ])
+      if (incidentUnits.size > 0 && messageUnits.size > 0) {
+        for (const u of messageUnits) {
+          if (incidentUnits.has(u)) return inc
+        }
+      }
+
+      // (c) High-confidence keyword match: requires 3+ NON-STOPLIST keywords matching
+      // (much stricter than the previous "2 matches wins")
+      const keywords = (inc.thread_keywords as string[] | null) ?? []
+      const meaningful = keywords.filter(k => k && k.length >= 4 && !KEYWORD_STOPLIST.has(k.toLowerCase()))
+      if (meaningful.length >= 3) {
+        const matchCount = meaningful.filter(k => lower.includes(k.toLowerCase())).length
+        if (matchCount >= 3) return inc
+      }
     }
 
     return null
