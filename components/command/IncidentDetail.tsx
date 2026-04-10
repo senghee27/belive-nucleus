@@ -26,10 +26,10 @@ export function IncidentDetail({ incident, onDecide, onResolve, loading }: Props
   const [editing, setEditing] = useState(false)
   const [replyText, setReplyText] = useState('')
   const [sending, setSending] = useState(false)
-  const [sent, setSent] = useState(false)
+  const [sentCount, setSentCount] = useState(0)
 
   useEffect(() => {
-    setSummary(incident.ai_summary); setProposal(incident.ai_proposal ?? ''); setEditing(false); setSent(false)
+    setSummary(incident.ai_summary); setProposal(incident.ai_proposal ?? ''); setEditing(false); setSentCount(0)
     fetch(`/api/incidents/${incident.id}/timeline`).then(r => r.json()).then(d => { if (d.ok) setTimeline(d.entries) })
     fetch('/api/staff').then(r => r.json()).then(d => {
       if (d.ok) {
@@ -58,14 +58,19 @@ export function IncidentDetail({ incident, onDecide, onResolve, loading }: Props
   async function handleSend(useProposed: boolean) {
     setSending(true)
     try {
-      const body = useProposed ? { use_proposed: true } : { content: replyText }
+      // If proposal was edited, send the edited version instead of use_proposed
+      const isEdited = proposal !== (incident.ai_proposal ?? '')
+      const body = useProposed
+        ? (isEdited ? { content: proposal } : { use_proposed: true })
+        : { content: replyText }
       const d = await fetch(`/api/incidents/${incident.id}/reply`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       }).then(r => r.json())
       if (d.ok) {
         toast.success(d.thread_reply ? '✓ Sent in thread as Lee' : '✓ Sent to group as Lee')
-        setSent(true); setReplyText('')
-        if (useProposed) onDecide(incident.id, 'approved')
+        setSentCount(prev => prev + 1)
+        setReplyText('')
+        if (useProposed) onDecide(incident.id, isEdited ? 'edited' : 'approved')
       } else if (d.token_expired) {
         toast.error('Token expired — please logout and re-login to refresh', { duration: 10000 })
       } else { toast.error(d.error ?? 'Failed to send') }
@@ -220,7 +225,12 @@ export function IncidentDetail({ incident, onDecide, onResolve, loading }: Props
                   <p className="text-[11px] text-[#E8EEF8] leading-relaxed whitespace-pre-wrap">{proposal}</p>
                 </div>
               )}
-              <button onClick={() => setEditing(!editing)} className="text-[9px] text-[#F2784B] mt-1">{editing ? 'Done editing' : '✏️ Edit'}</button>
+              <div className="flex items-center gap-2 mt-1">
+                <button onClick={() => setEditing(!editing)} className="text-[9px] text-[#F2784B]">{editing ? 'Done editing' : '✏️ Edit'}</button>
+                {!editing && proposal !== (incident.ai_proposal ?? '') && (
+                  <button onClick={() => setProposal(incident.ai_proposal ?? '')} className="text-[9px] text-[#4B5A7A] hover:text-[#8A9BB8]">↩ Reset</button>
+                )}
+              </div>
             </div>
           )}
 
@@ -237,27 +247,26 @@ export function IncidentDetail({ incident, onDecide, onResolve, loading }: Props
               <span className="text-[8px] text-[#2A3550]">{replyText.length}/500</span>
             </div>
 
-            {sent ? (
-              <p className="text-[10px] text-[#4BF2A2] mt-2">✓ Sent in thread</p>
-            ) : (
-              <div className="flex gap-2 mt-2">
-                {isAwaiting && incident.ai_proposal && (
-                  <button onClick={() => handleSend(true)} disabled={sending}
-                    className="flex-1 h-8 rounded-lg bg-[#4BF2A2]/10 text-[#4BF2A2] text-[10px] font-medium hover:bg-[#4BF2A2]/20 disabled:opacity-50 flex items-center justify-center gap-1">
-                    <CheckCircle size={11} /> {sending ? '...' : 'Approve & Send'}
-                  </button>
-                )}
-                <button onClick={() => handleSend(false)} disabled={sending || !replyText.trim()}
-                  className="flex-1 h-8 rounded-lg bg-[#F2784B]/10 text-[#F2784B] text-[10px] font-medium hover:bg-[#F2784B]/20 disabled:opacity-30 flex items-center justify-center gap-1">
-                  <Send size={11} /> {sending ? '...' : 'Send Custom'}
-                </button>
-                <button onClick={handleTestSend}
-                  title="Send to Nucleus Testing Group — safe for testing"
-                  className="h-8 px-3 rounded-lg border border-[#2E4070] text-[#4B5A7A] text-[10px] hover:border-[#9B6DFF] hover:text-[#9B6DFF] transition-colors flex items-center gap-1">
-                  <FlaskConical size={11} /> Test
-                </button>
-              </div>
+            {sentCount > 0 && (
+              <p className="text-[10px] text-[#4BF2A2] mt-1">✓ Sent {sentCount} message{sentCount > 1 ? 's' : ''}</p>
             )}
+            <div className="flex gap-2 mt-2">
+              {incident.ai_proposal && (
+                <button onClick={() => handleSend(true)} disabled={sending}
+                  className="flex-1 h-8 rounded-lg bg-[#4BF2A2]/10 text-[#4BF2A2] text-[10px] font-medium hover:bg-[#4BF2A2]/20 disabled:opacity-50 flex items-center justify-center gap-1">
+                  <CheckCircle size={11} /> {sending ? '...' : (proposal !== (incident.ai_proposal ?? '') ? 'Send Edited' : 'Approve & Send')}
+                </button>
+              )}
+              <button onClick={() => handleSend(false)} disabled={sending || !replyText.trim()}
+                className="flex-1 h-8 rounded-lg bg-[#F2784B]/10 text-[#F2784B] text-[10px] font-medium hover:bg-[#F2784B]/20 disabled:opacity-30 flex items-center justify-center gap-1">
+                <Send size={11} /> {sending ? '...' : 'Send Custom'}
+              </button>
+              <button onClick={handleTestSend}
+                title="Send to Nucleus Testing Group — safe for testing"
+                className="h-8 px-3 rounded-lg border border-[#2E4070] text-[#4B5A7A] text-[10px] hover:border-[#9B6DFF] hover:text-[#9B6DFF] transition-colors flex items-center gap-1">
+                <FlaskConical size={11} /> Test
+              </button>
+            </div>
           </div>
 
           {/* Actions */}
