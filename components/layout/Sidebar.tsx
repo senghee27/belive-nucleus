@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Home, Zap, LayoutGrid, Clock, User, DollarSign, Settings, Code, Brain, Wrench, Activity, LogOut, Radio, FileText } from 'lucide-react'
+import { Home, Zap, LayoutGrid, Clock, User, DollarSign, Settings, Code, Brain, Wrench, Activity, LogOut, Radio, FileText, GraduationCap } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
@@ -19,6 +19,7 @@ const NAV_ITEMS = [
   { href: '/memory', icon: Brain, label: 'Memory' },
   { href: '/watchdog', icon: Radio, label: 'Watchdog', showErrorBadge: true },
   { href: '/briefings', icon: FileText, label: 'Briefings', showDraftBadge: true },
+  { href: '/learning', icon: GraduationCap, label: 'Learning' },
   { href: '/settings', icon: Wrench, label: 'Settings' },
 ]
 

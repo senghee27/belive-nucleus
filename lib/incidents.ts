@@ -80,12 +80,19 @@ Respond ONLY valid JSON:
 export async function proposeAction(
   incident: Incident,
   pastIncidents: Incident[]
-): Promise<{ proposal: string; reasoning: string; confidence: number }> {
+): Promise<{ proposal: string; reasoning: string; confidence: number; pastFeedbackInjected: boolean }> {
   try {
     const pastExamples = pastIncidents
       .filter(i => i.lee_instruction)
       .map(i => `Issue: ${i.title}\nLee said: ${i.lee_instruction}`)
       .join('\n---\n')
+
+    // Inject learned rules from past category feedback
+    const { getCategoryFeedbackForPrompt } = await import('./learning/category-feedback')
+    const categoryRules = await getCategoryFeedbackForPrompt(incident.category ?? 'other')
+    const learnedRulesBlock = categoryRules.length > 0
+      ? `\nLEARNED RULES (from Lee's past corrections in "${incident.category}" category):\n${categoryRules.map((r, i) => `${i + 1}. ${r.rule}`).join('\n')}\n`
+      : ''
 
     const msg = await client.messages.create({
       model: 'claude-sonnet-4-6',
@@ -95,7 +102,7 @@ export async function proposeAction(
 KEY PEOPLE: Fatihah (OM), Fariha (Maintenance), Adam (OOE Lead), Linda (Owner Relations), David (Housekeeping)
 PRINCIPLES: Ops stability first. Protect owners. P1=2h response. RM5,000+ needs Lee. Name the specific PIC. Give specific deadlines.
 STYLE: Direct, decisive, Manglish natural. Not a bot.
-${pastExamples ? `\nPAST DECISIONS:\n${pastExamples}` : ''}
+${learnedRulesBlock}${pastExamples ? `\nPAST DECISIONS:\n${pastExamples}` : ''}
 
 Respond ONLY valid JSON:
 {"proposal":"exact instruction Lee would send","reasoning":"why this is right","confidence":85}`,
@@ -108,10 +115,11 @@ Respond ONLY valid JSON:
       proposal: (parsed.proposal as string) ?? '',
       reasoning: (parsed.reasoning as string) ?? '',
       confidence: Math.min(100, Math.max(0, (parsed.confidence as number) ?? 70)),
+      pastFeedbackInjected: categoryRules.length > 0,
     }
   } catch (error) {
     console.error('[incidents:propose]', error instanceof Error ? error.message : 'Unknown')
-    return { proposal: '', reasoning: 'Proposal generation failed', confidence: 0 }
+    return { proposal: '', reasoning: 'Proposal generation failed', confidence: 0, pastFeedbackInjected: false }
   }
 }
 
@@ -184,7 +192,7 @@ export async function analyseIncident(incidentId: string): Promise<Incident | nu
       .order('created_at', { ascending: false })
       .limit(3)
 
-    const { proposal, reasoning, confidence } = await proposeAction(incident as Incident, (past ?? []) as Incident[])
+    const { proposal, reasoning, confidence, pastFeedbackInjected } = await proposeAction(incident as Incident, (past ?? []) as Incident[])
 
     const newStatus = confidence >= 95 && incident.priority !== 'P1' ? 'acting' : 'awaiting_lee'
     const autoExec = newStatus === 'acting'
@@ -202,6 +210,16 @@ export async function analyseIncident(incidentId: string): Promise<Incident | nu
       .eq('id', incidentId)
       .select()
       .single()
+
+    // Create v1 revision in the learning chain
+    if (proposal) {
+      try {
+        const { createInitialRevision } = await import('./learning/revision-manager')
+        await createInitialRevision(incidentId, proposal, confidence, undefined, pastFeedbackInjected)
+      } catch (error) {
+        console.error('[incidents:analyse:revision]', error instanceof Error ? error.message : 'Unknown')
+      }
+    }
 
     return updated as Incident
   } catch (error) {
@@ -259,6 +277,15 @@ export async function leeDecides(
     logger.leeAction({
       action, incidentId, incidentTitle: incident.title, cluster: incident.cluster ?? '',
     }).catch(() => {})
+
+    // Finalize revision chain
+    try {
+      const { finalizeRevisionChain } = await import('./learning/revision-manager')
+      const outcome = action === 'rejected' ? 'discarded' : action === 'edited' ? 'edited' : 'approved'
+      await finalizeRevisionChain(incidentId, outcome)
+    } catch (error) {
+      console.error('[incidents:decide:finalize]', error instanceof Error ? error.message : 'Unknown')
+    }
 
     if (action === 'rejected') {
       await supabaseAdmin.from('incident_timeline').insert({

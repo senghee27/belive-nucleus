@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
 import { RefreshCw, Copy, CheckCircle, ArrowUp, Archive, Send, X, ChevronDown, ChevronUp, FlaskConical } from 'lucide-react'
+import { ProposalRevisionPanel } from './ProposalRevisionPanel'
 import { formatDistanceToNow } from 'date-fns'
 import type { Incident, IncidentTimeline } from '@/lib/types'
 
@@ -207,31 +208,14 @@ export function IncidentDetail({ incident, onDecide, onResolve, loading }: Props
             {summaryOpen && <p className="text-[10px] text-[#8A9BB8] leading-relaxed">{summary ?? 'Tap ↻ to generate'}</p>}
           </div>
 
-          {/* Proposed Action */}
+          {/* Proposed Action — with revision learning panel */}
           {incident.ai_proposal && (
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[9px] text-[#4B5A7A] uppercase tracking-wider">Proposed Action</span>
-                <div className="flex items-center gap-2">
-                  {edited && <span className="text-[8px] text-[#E8A838] bg-[#E8A838]/10 px-1 rounded">Edited</span>}
-                  <span className="text-[9px] font-[family-name:var(--font-jetbrains-mono)]" style={{ color: incident.ai_confidence >= 85 ? '#4BF2A2' : incident.ai_confidence >= 65 ? '#E8A838' : '#E05252' }}>{incident.ai_confidence}%</span>
-                </div>
-              </div>
-              {editing ? (
-                <textarea value={proposal} onChange={e => setProposal(e.target.value)}
-                  className="w-full bg-[#080E1C] border border-[#1A2035] rounded-lg p-3 text-[11px] text-[#E8EEF8] resize-none focus:outline-none focus:border-[#F2784B]/50 leading-relaxed" rows={6} />
-              ) : (
-                <div className="bg-[#080E1C] border border-[#1A2035] rounded-lg p-3">
-                  <p className="text-[11px] text-[#E8EEF8] leading-relaxed whitespace-pre-wrap">{proposal}</p>
-                </div>
-              )}
-              <div className="flex items-center gap-2 mt-1">
-                <button onClick={() => setEditing(!editing)} className="text-[9px] text-[#F2784B]">{editing ? 'Done editing' : '✏️ Edit'}</button>
-                {!editing && proposal !== (incident.ai_proposal ?? '') && (
-                  <button onClick={() => setProposal(incident.ai_proposal ?? '')} className="text-[9px] text-[#4B5A7A] hover:text-[#8A9BB8]">↩ Reset</button>
-                )}
-              </div>
-            </div>
+            <ProposalRevisionPanel
+              incidentId={incident.id}
+              originalProposal={incident.ai_proposal ?? ''}
+              originalConfidence={incident.ai_confidence}
+              onRevisionUpdate={(newProposal) => setProposal(newProposal)}
+            />
           )}
 
           {/* Send as Lee */}

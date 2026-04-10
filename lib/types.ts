@@ -222,6 +222,78 @@ export type BriefingAutosendConfig = {
   auto_send_eligible: boolean
 }
 
+export type ProposalRevision = {
+  id: string
+  incident_id: string
+  version_number: number
+  proposal_text: string
+  ai_confidence: number | null
+  feedback_text: string | null
+  feedback_tags: string[]
+  is_final: boolean
+  outcome: 'approved' | 'edited' | 'discarded' | 'pending'
+  ai_prompt_tokens: number | null
+  ai_completion_tokens: number | null
+  past_feedback_injected: boolean
+  created_at: string
+  decided_at: string | null
+}
+
+export type RevisionFeedback = {
+  tags: string[]
+  text: string
+}
+
+export type CategoryLearningStats = {
+  id: string
+  category: string
+  total_proposals: number
+  approved_v1: number
+  approved_edited: number
+  discarded: number
+  acceptance_rate: number
+  edit_rate: number
+  last_20_outcomes: string[]
+  consecutive_approvals: number
+  auto_send_eligible: boolean
+  auto_send_enabled: boolean
+  top_tags: { tag: string; count: number }[]
+  updated_at: string
+}
+
+export type CategoryFeedbackRule = {
+  rule: string
+  source_count: number
+  example_feedback: string
+}
+
+export type FeedbackTag =
+  | 'Wrong person'
+  | 'Wrong tone'
+  | 'Missing deadline'
+  | 'Missing context'
+  | 'Too aggressive'
+  | 'Too soft'
+  | string
+
+export const DEFAULT_FEEDBACK_TAGS: FeedbackTag[] = [
+  'Wrong person',
+  'Wrong tone',
+  'Missing deadline',
+  'Missing context',
+  'Too aggressive',
+  'Too soft',
+]
+
+export const FEEDBACK_TAG_COLORS: Record<string, string> = {
+  'Wrong person': '#E8A838',
+  'Wrong tone': '#9B6DFF',
+  'Missing deadline': '#4BB8F2',
+  'Missing context': '#4BF2A2',
+  'Too aggressive': '#E05252',
+  'Too soft': '#8A9BB8',
+}
+
 export type BriefingCronRun = {
   id: string
   created_at: string
