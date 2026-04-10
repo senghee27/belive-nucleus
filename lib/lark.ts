@@ -1,9 +1,9 @@
 const LARK_API_BASE = 'https://open.larksuite.com'
 
 // ===== SAFETY GATE =====
-// When TEST_MODE is true, ALL outbound messages are redirected to the test group.
-// Set to false ONLY when ready to go live with real cluster groups.
-const TEST_MODE = true
+// TEST_MODE OFF — Approve & Send goes to real groups.
+// Test button has its own hardcoded test group chat_id.
+const TEST_MODE = false
 const TEST_CHAT_ID = 'oc_585301f0077f09015428801da0cba90d' // Nucleus Testing Group
 
 // Lee's open_id is always allowed (DMs to Lee are safe)
