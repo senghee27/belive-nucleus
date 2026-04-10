@@ -25,9 +25,43 @@ async function processLarkWebhook(body: Record<string, unknown>) {
     const chatType = message.chat_type as string // 'p2p' or 'group'
     const rawContent = message.content as string
 
-    // Parse content + resolve @mentions
-    let content: string
-    try { content = JSON.parse(rawContent).text ?? rawContent } catch { content = rawContent }
+    // Parse content based on message type — handles text, post (rich), and interactive cards
+    let content = ''
+    try {
+      const body = JSON.parse(rawContent)
+      if (body.text) {
+        // Plain text message
+        content = body.text.replace(/<[^>]*>/g, '').trim()
+      } else if (body.title || body.content) {
+        // Rich text post (Lark "post" msg_type) — content is array of arrays of elements
+        const texts: string[] = []
+        if (body.title) texts.push(body.title)
+        const lines = body.content ?? []
+        for (const line of lines) {
+          if (Array.isArray(line)) {
+            for (const elem of line) {
+              if (elem?.text) texts.push(elem.text)
+              else if (elem?.tag === 'a' && elem?.text) texts.push(elem.text)
+              else if (elem?.tag === 'at' && elem?.user_name) texts.push(`@${elem.user_name}`)
+            }
+          }
+        }
+        content = texts.join(' ').replace(/\s+/g, ' ').trim()
+      } else if (body.elements) {
+        // Interactive card
+        const texts: string[] = []
+        for (const row of body.elements ?? []) {
+          if (Array.isArray(row)) {
+            for (const elem of row) if (elem?.text) texts.push(elem.text)
+          } else if ((row as { text?: string })?.text) {
+            texts.push((row as { text: string }).text)
+          }
+        }
+        content = texts.join('\n').trim()
+      }
+    } catch {
+      content = rawContent
+    }
     if (!content?.trim()) return
 
     // Resolve @_user_N mentions to real names from payload
