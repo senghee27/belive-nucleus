@@ -279,9 +279,18 @@ export async function leeDecides(
     }).catch(() => {})
 
     // Finalize revision chain
+    // Outcome rules per spec:
+    //   - rejected → discarded
+    //   - approved + current_version > 1 → edited (sent after revisions)
+    //   - approved + current_version === 1 → approved (sent as-is)
+    //   - edited action → edited (Lee wrote custom text)
     try {
       const { finalizeRevisionChain } = await import('./learning/revision-manager')
-      const outcome = action === 'rejected' ? 'discarded' : action === 'edited' ? 'edited' : 'approved'
+      const currentVersion = (incident.current_version as number | null) ?? 1
+      let outcome: 'approved' | 'edited' | 'discarded'
+      if (action === 'rejected') outcome = 'discarded'
+      else if (action === 'edited') outcome = 'edited'
+      else outcome = currentVersion > 1 ? 'edited' : 'approved'
       await finalizeRevisionChain(incidentId, outcome)
     } catch (error) {
       console.error('[incidents:decide:finalize]', error instanceof Error ? error.message : 'Unknown')
