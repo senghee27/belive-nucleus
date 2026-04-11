@@ -261,6 +261,16 @@ async function processGroupMessage(payload: {
     //    reasoning steps (i.e. a full successful classification), false
     //    when we fell back. raw_lark_text preserves the tenant voice so
     //    the /clusters amber fallback always has source text.
+    //    attention_required is the /clusters Command mode filter — heuristic
+    //    until a dedicated 7th reasoning step exists: any P1, unclassified,
+    //    voice_fit=lee, or any reasoning step below 70% confidence.
+    const fullyClassified = classification.reasoning_steps.length === 6
+    const lowConfidence = classification.reasoning_steps.some(s => s.confidence < 70)
+    const attentionRequired =
+      classification.priority === 'P1' ||
+      !fullyClassified ||
+      classification.voice_fit === 'lee' ||
+      lowConfidence
     const incident = await createIncident({
       source: 'lark_scan',
       source_message_id: payload.message_id,
@@ -280,8 +290,9 @@ async function processGroupMessage(payload: {
       assigned_to: classification.assigned_to,
       lark_root_id: payload.root_id ?? null,
       situation_summary: classification.situation_summary,
-      is_classified: classification.reasoning_steps.length === 6,
+      is_classified: fullyClassified,
       raw_lark_text: payload.content,
+      attention_required: attentionRequired,
     }, classification.match_result)
 
     if (incident) {
@@ -328,6 +339,14 @@ async function processDirectMessage(payload: {
     )
     if (!classification.is_incident) return
 
+    const fullyClassified = classification.reasoning_steps.length === 6
+    const lowConfidence = classification.reasoning_steps.some(s => s.confidence < 70)
+    const attentionRequired =
+      classification.priority === 'P1' ||
+      !fullyClassified ||
+      classification.voice_fit === 'lee' ||
+      lowConfidence
+
     const incident = await createIncident({
       source: 'lark_webhook',
       source_message_id: payload.message_id,
@@ -343,8 +362,9 @@ async function processDirectMessage(payload: {
       assigned_to: classification.assigned_to,
       lark_root_id: null,
       situation_summary: classification.situation_summary,
-      is_classified: classification.reasoning_steps.length === 6,
+      is_classified: fullyClassified,
       raw_lark_text: payload.content,
+      attention_required: attentionRequired,
     }, classification.match_result)
 
     if (incident) {

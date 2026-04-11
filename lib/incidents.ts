@@ -388,6 +388,7 @@ export async function createIncident(
     situation_summary?: string | null
     is_classified?: boolean
     raw_lark_text?: string | null
+    attention_required?: boolean
   },
   matchResult?: MatchResult
 ): Promise<Incident | null> {
@@ -475,6 +476,10 @@ export async function createIncident(
       situation_summary: data.situation_summary ?? null,
       is_classified: data.is_classified ?? false,
       raw_lark_text: data.raw_lark_text ?? data.raw_content,
+      // attention_required drives the Command mode filter on /clusters.
+      // Defaults to true when caller didn't compute one — safer to
+      // over-surface than to silently drop an incident from triage.
+      attention_required: data.attention_required ?? true,
       escalation_due_at: new Date(Date.now() + hours * 3600000).toISOString(),
       thread_keywords: keywords,
     }
@@ -493,7 +498,7 @@ export async function createIncident(
     // once all environments are known to be on the latest migration.
     if (error && /column .* does not exist/i.test(error.message)) {
       const missingNewColumns =
-        /lark_root_id|assigned_to|min_reasoning_confidence|merge_count|merged_from_incident_id|situation_summary|is_classified|raw_lark_text/i.test(error.message)
+        /lark_root_id|assigned_to|min_reasoning_confidence|merge_count|merged_from_incident_id|situation_summary|is_classified|raw_lark_text|attention_required/i.test(error.message)
       if (missingNewColumns) {
         console.warn('[incidents:create] pre-migration schema detected, retrying without optional columns')
         const legacyPayload = { ...insertPayload }
@@ -502,6 +507,7 @@ export async function createIncident(
         delete legacyPayload.situation_summary
         delete legacyPayload.is_classified
         delete legacyPayload.raw_lark_text
+        delete legacyPayload.attention_required
         const retry = await supabaseAdmin
           .from('incidents')
           .insert(legacyPayload)

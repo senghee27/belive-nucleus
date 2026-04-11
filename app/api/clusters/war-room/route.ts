@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sortClustersNatural } from '@/lib/clusters/sort'
 import { getAllStaff, sanitizeOwnerLabel, type StaffMember } from '@/lib/staff-directory'
@@ -8,17 +8,32 @@ import {
   WAR_ROOM_GROUP_ORDER,
   type WarRoomCategoryGroup,
 } from '@/lib/types'
-import type { Incident, Priority, Severity } from '@/lib/types'
+import type { Priority, Severity } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 
-// Slim row shape — only the fields the war-room view renders, so
-// the API response stays under a few KB even with all 11 clusters.
+// ---------------------------------------------------------------------------
+// War-Room API — two-mode response.
 //
-// owner_display is pre-resolved server-side through the staff
-// directory cache (see buildStaffIndex below). Clients should read
-// owner_display directly and NEVER fall back to sender_name / open_id.
-export type WarRoomRow = {
+// ?mode=tickets  → operational pipeline from ai_report_tickets (4 bands,
+//                  1-line rows, overdue-first sort, ai_summary on hover)
+// ?mode=command  → triage stream from incidents WHERE attention_required
+//                  AND ticket_id IS NULL (single band, 2-line rows,
+//                  severity→recency sort, amber fallback for unclassified)
+//
+// The two modes never share rows: Command excludes any incident linked
+// to a ticket so the "same issue" can't appear in both views. Tickets
+// come from the ai_report Lark group parser path; regular cluster chat
+// produces incidents. The webhook already routes these into separate
+// tables — this API just honors that separation.
+// ---------------------------------------------------------------------------
+
+export type WarRoomMode = 'tickets' | 'command'
+
+// -------- Shared row metadata --------
+
+// Incident-shaped row (Command mode). Owner pre-resolved server-side.
+export type WarRoomIncidentRow = {
   id: string
   title: string
   priority: Priority
@@ -33,91 +48,83 @@ export type WarRoomRow = {
   sender_name: string | null
   sender_open_id: string | null
   assigned_to: string | null
-  owner_display: string  // always a clean label — "Fariha", "Corina", or "— unknown"
+  owner_display: string
   status: string
 }
 
-export type WarRoomCategoryBucket = {
-  rows: WarRoomRow[]     // truncated to WAR_ROOM_GROUP_LIMIT[group]
-  total: number          // total open in this (cluster, group)
-  overdue: number        // escalation_due_at < now AND !escalated
+// Ticket-shaped row (Tickets mode). Pre-derived category + pre-resolved owner.
+export type WarRoomTicketRow = {
+  id: string
+  ticket_id: string                // BLV-RQ-XXXXXX
+  title: string                    // human-written (issue_description or summary)
+  hover_description: string | null // full issue_description for hover tooltip
+  category: string                 // derived from issue_description text
+  sla_date: string | null          // date string ("2026-04-15")
+  // Synthetic timestamp the shared OverduePill can read as
+  // escalation_due_at — end-of-day UTC of sla_date.
+  sla_due_at: string | null
+  sla_overdue: boolean
+  age_days: number
+  owner_display: string
+  property: string | null
+  unit_number: string | null
+  cluster: string
+  // Severity derived from SLA state — 'RED' = overdue, 'YELLOW' = <24h, 'GREEN' = otherwise
+  severity: Severity
 }
 
-export type WarRoomCluster = {
+// -------- Bucket + cluster shapes per mode --------
+
+export type WarRoomTicketBucket = {
+  rows: WarRoomTicketRow[]
+  total: number
+  overdue: number
+}
+
+export type WarRoomIncidentBucket = {
+  rows: WarRoomIncidentRow[]
+  total: number
+  overdue: number
+}
+
+export type WarRoomClusterTickets = {
   cluster: string
   cluster_name: string | null
-  health_status: string | null
-  maintenance: WarRoomCategoryBucket
-  cleaning: WarRoomCategoryBucket
-  move_in: WarRoomCategoryBucket
-  move_out: WarRoomCategoryBucket
-  incidents: WarRoomCategoryBucket
+  worst_sla: 'overdue' | 'due_soon' | 'ontime' | null
+  maintenance: WarRoomTicketBucket
+  cleaning: WarRoomTicketBucket
+  move_in: WarRoomTicketBucket
+  move_out: WarRoomTicketBucket
 }
 
-const OPEN_STATUSES = ['new', 'analysed', 'awaiting_lee', 'acting'] as const
+// Command mode has a single band (incidents) per cluster.
+const COMMAND_BAND_LIMIT = 20
 
-function isOverdue(row: Pick<Incident, 'escalation_due_at' | 'escalated'>): boolean {
-  if (!row.escalation_due_at) return false
-  if (row.escalated) return false
-  return new Date(row.escalation_due_at).getTime() < Date.now()
+export type WarRoomClusterCommand = {
+  cluster: string
+  cluster_name: string | null
+  worst_severity: Severity | null
+  incidents: WarRoomIncidentBucket
 }
 
-/**
- * Worst-first priority/severity ordering used to pick the top-N rows
- * per (cluster, group). Unclassified rows always sort first so Lee
- * sees them immediately — amber fallbacks are the most urgent
- * review-by-human signal.
- */
-function compareRows(a: WarRoomRow, b: WarRoomRow): number {
-  // 1. Unclassified first
-  const aUnclassified = !a.is_classified ? 0 : 1
-  const bUnclassified = !b.is_classified ? 0 : 1
-  if (aUnclassified !== bUnclassified) return aUnclassified - bUnclassified
+export type WarRoomResponse =
+  | {
+      mode: 'tickets'
+      clusters: WarRoomClusterTickets[]
+      generated_at: string
+    }
+  | {
+      mode: 'command'
+      clusters: WarRoomClusterCommand[]
+      generated_at: string
+    }
 
-  // 2. Overdue first
-  const aOverdue = isOverdue(a) ? 0 : 1
-  const bOverdue = isOverdue(b) ? 0 : 1
-  if (aOverdue !== bOverdue) return aOverdue - bOverdue
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
-  // 3. Priority (P1 < P2 < P3)
-  const prRank: Record<Priority, number> = { P1: 0, P2: 1, P3: 2 }
-  const pa = prRank[a.priority] ?? 3
-  const pb = prRank[b.priority] ?? 3
-  if (pa !== pb) return pa - pb
+const OPEN_INCIDENT_STATUSES = ['new', 'analysed', 'awaiting_lee', 'acting'] as const
 
-  // 4. Severity (RED < YELLOW < GREEN)
-  const sevRank: Record<Severity, number> = { RED: 0, YELLOW: 1, GREEN: 2 }
-  const sa = sevRank[a.severity] ?? 3
-  const sb = sevRank[b.severity] ?? 3
-  if (sa !== sb) return sa - sb
-
-  // 5. Oldest first (longest-open rows bubble up)
-  return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-}
-
-function emptyBucket(): WarRoomCategoryBucket {
-  return { rows: [], total: 0, overdue: 0 }
-}
-
-function emptyCluster(cluster: string, name: string | null, health: string | null): WarRoomCluster {
-  return {
-    cluster,
-    cluster_name: name,
-    health_status: health,
-    maintenance: emptyBucket(),
-    cleaning: emptyBucket(),
-    move_in: emptyBucket(),
-    move_out: emptyBucket(),
-    incidents: emptyBucket(),
-  }
-}
-
-/**
- * Build a one-shot open_id → StaffMember map for this request. We
- * prefer to hit the DB once up-front (getAllStaff is a single select)
- * over N parallel resolveOpenId calls during row mapping, which would
- * also miss the in-memory cache for cold workers.
- */
 async function buildStaffIndex(): Promise<Map<string, StaffMember>> {
   try {
     const staff = await getAllStaff()
@@ -128,119 +135,331 @@ async function buildStaffIndex(): Promise<Map<string, StaffMember>> {
   }
 }
 
-function ownerDisplayFor(
+async function loadClusterMeta(): Promise<Map<string, { name: string | null; status: string | null }>> {
+  const { data } = await supabaseAdmin
+    .from('cluster_health_cache')
+    .select('cluster, cluster_name, health_status')
+  const map = new Map<string, { name: string | null; status: string | null }>()
+  for (const row of data ?? []) {
+    map.set(row.cluster as string, {
+      name: (row.cluster_name as string) ?? null,
+      status: (row.health_status as string) ?? null,
+    })
+  }
+  return map
+}
+
+/**
+ * Derive a war-room category from a ticket's issue_description text.
+ * ai_report_tickets has no explicit category column — the Livability
+ * Report is free-text so this is best-effort keyword matching.
+ * Returns one of the raw ISSUE_CATEGORIES keys so downstream
+ * categoryGroup() can bucket it.
+ */
+function deriveTicketCategory(description: string): string {
+  const text = description.toLowerCase()
+  if (/\b(aircond|air[- ]?con|a\/?c|cooling)\b/.test(text)) return 'air_con'
+  if (/\b(leak|bocor|pipe|paip|water|plumb|pipa|drain)/.test(text)) return 'plumbing'
+  if (/\b(electric|lampu|socket|wiring|power|switch|mcb|trip)/.test(text)) return 'electrical'
+  if (/\b(lift|elevator)/.test(text)) return 'lift'
+  if (/\b(water[- ]?heater|heater|hot water)/.test(text)) return 'water_heater'
+  if (/\b(door|lock|access[- ]?card|card reader|key)/.test(text)) return 'door_lock'
+  if (/\b(structural|wall|ceiling|crack|collapse|tile|floor)/.test(text)) return 'structural'
+  if (/\b(pest|cockroach|rat|mice|insect|bug|termite)/.test(text)) return 'pest'
+  if (/\b(clean|dirty|stain|smell|filthy)/.test(text)) return 'cleaning'
+  if (/\b(hygiene|trash|waste|garbage|rubbish|bin)/.test(text)) return 'hygiene'
+  if (/\b(move[- ]?in|check[- ]?in|onboard)/.test(text)) return 'move_in'
+  if (/\b(move[- ]?out|check[- ]?out|handover)/.test(text)) return 'move_out'
+  return 'general_repair'
+}
+
+function deriveTicketSeverity(sla_overdue: boolean, sla_due_at: string | null): Severity {
+  if (sla_overdue) return 'RED'
+  if (sla_due_at) {
+    const ms = new Date(sla_due_at).getTime() - Date.now()
+    if (ms > 0 && ms < 24 * 3600 * 1000) return 'YELLOW'
+  }
+  return 'GREEN'
+}
+
+function ownerDisplayForIncident(
   row: { assigned_to: string | null; sender_open_id: string | null; sender_name: string | null },
   staffIndex: Map<string, StaffMember>,
 ): string {
-  // 1. Structured routing PIC — always a clean first name
   if (row.assigned_to) {
     const clean = sanitizeOwnerLabel(row.assigned_to)
     if (clean !== '— unknown') return clean
   }
-  // 2. Staff directory lookup by open_id
   if (row.sender_open_id) {
     const match = staffIndex.get(row.sender_open_id)
-    if (match) {
-      return match.first_name || sanitizeOwnerLabel(match.name)
-    }
+    if (match) return match.first_name || sanitizeOwnerLabel(match.name)
   }
-  // 3. Sanitize whatever sender_name was persisted — raw open_ids
-  //    from the pre-fix webhook get collapsed to "— unknown" here
   return sanitizeOwnerLabel(row.sender_name)
 }
 
-export async function GET() {
-  // 1. Cluster metadata (name + rollup health) from cluster_health_cache.
-  //    If the cache is empty (fresh install) the war-room can still render
-  //    off the incidents table alone.
-  const { data: healthRows } = await supabaseAdmin
-    .from('cluster_health_cache')
-    .select('cluster, cluster_name, health_status')
+function ownerDisplayForTicket(owner_name: string | null | undefined): string {
+  // ai_report_tickets.owner_name is parsed from the Livability Report
+  // free-text, so raw open_ids are extremely unlikely. Still route
+  // through sanitizeOwnerLabel for consistency.
+  return sanitizeOwnerLabel(owner_name ?? null)
+}
 
-  // 1b. Pre-load staff for bulk owner resolution
-  const staffIndex = await buildStaffIndex()
+// ---------------------------------------------------------------------------
+// Mode: Tickets
+// ---------------------------------------------------------------------------
 
-  const healthByCluster = new Map<string, { name: string | null; status: string | null }>()
-  for (const h of healthRows ?? []) {
-    healthByCluster.set(h.cluster as string, {
-      name: (h.cluster_name as string) ?? null,
-      status: (h.health_status as string) ?? null,
-    })
+async function buildTicketsResponse(
+  meta: Map<string, { name: string | null; status: string | null }>,
+): Promise<WarRoomResponse> {
+  const { data: ticketsRaw, error } = await supabaseAdmin
+    .from('ai_report_tickets')
+    .select(`
+      id, ticket_id, issue_description, summary, owner_name,
+      property, cluster, unit_number, age_days, sla_date, sla_overdue, status
+    `)
+    .eq('status', 'open')
+    .order('sla_overdue', { ascending: false })
+    .order('age_days', { ascending: false })
+    .limit(1500)
+
+  if (error) {
+    throw new Error(`tickets query: ${error.message}`)
   }
 
-  // 2. All open incidents — one query, partitioned in-memory. At
-  //    realistic volumes (~20 open per cluster × 11 clusters = 220 rows)
-  //    this is cheaper than 11 parallel queries.
+  const rows = (ticketsRaw ?? []) as Array<{
+    id: string
+    ticket_id: string
+    issue_description: string | null
+    summary: string | null
+    owner_name: string | null
+    property: string | null
+    cluster: string | null
+    unit_number: string | null
+    age_days: number | null
+    sla_date: string | null
+    sla_overdue: boolean | null
+    status: string
+  }>
+
+  // Project + bucket by cluster + category group
+  const byCluster = new Map<string, Record<WarRoomCategoryGroup, WarRoomTicketRow[]>>()
+  for (const t of rows) {
+    if (!t.cluster) continue
+    const description = (t.issue_description ?? '').trim()
+    if (!description && !t.summary) continue
+    const category = deriveTicketCategory(description || (t.summary ?? ''))
+    const group = categoryGroup(category)
+    // Tickets mode has only 4 bands — skip anything that'd go into
+    // the "incidents" bucket (which belongs to Command mode).
+    if (group === 'incidents') continue
+
+    const slaDueAt = t.sla_date ? new Date(`${t.sla_date}T23:59:59Z`).toISOString() : null
+    const severity = deriveTicketSeverity(Boolean(t.sla_overdue), slaDueAt)
+    const title = (t.summary ?? description ?? t.ticket_id).slice(0, 120)
+
+    const ticketRow: WarRoomTicketRow = {
+      id: t.id,
+      ticket_id: t.ticket_id,
+      title,
+      hover_description: description || t.summary || null,
+      category,
+      sla_date: t.sla_date ?? null,
+      sla_due_at: slaDueAt,
+      sla_overdue: Boolean(t.sla_overdue),
+      age_days: Number(t.age_days ?? 0),
+      owner_display: ownerDisplayForTicket(t.owner_name),
+      property: t.property ?? null,
+      unit_number: t.unit_number ?? null,
+      cluster: t.cluster,
+      severity,
+    }
+
+    let buckets = byCluster.get(t.cluster)
+    if (!buckets) {
+      buckets = { maintenance: [], cleaning: [], move_in: [], move_out: [], incidents: [] }
+      byCluster.set(t.cluster, buckets)
+    }
+    buckets[group].push(ticketRow)
+  }
+
+  // Union of clusters from meta + from tickets
+  const allClusterCodes = new Set<string>([
+    ...meta.keys(),
+    ...byCluster.keys(),
+  ])
+
+  const clusters: WarRoomClusterTickets[] = [...allClusterCodes].map(code => {
+    const clusterMeta = meta.get(code)
+    const buckets = byCluster.get(code)
+    const shell: WarRoomClusterTickets = {
+      cluster: code,
+      cluster_name: clusterMeta?.name ?? null,
+      worst_sla: null,
+      maintenance: { rows: [], total: 0, overdue: 0 },
+      cleaning: { rows: [], total: 0, overdue: 0 },
+      move_in: { rows: [], total: 0, overdue: 0 },
+      move_out: { rows: [], total: 0, overdue: 0 },
+    }
+    if (!buckets) return shell
+
+    let anyOverdue = false
+    let anyDueSoon = false
+    for (const group of ['maintenance', 'cleaning', 'move_in', 'move_out'] as const) {
+      const groupRows = buckets[group]
+      // Already sorted by overdue-first/age-desc thanks to the DB order().
+      const capped = groupRows.slice(0, WAR_ROOM_GROUP_LIMIT[group])
+      const overdue = groupRows.filter(r => r.sla_overdue).length
+      if (overdue > 0) anyOverdue = true
+      if (groupRows.some(r => r.severity === 'YELLOW')) anyDueSoon = true
+      shell[group] = {
+        rows: capped,
+        total: groupRows.length,
+        overdue,
+      }
+    }
+    shell.worst_sla = anyOverdue ? 'overdue' : anyDueSoon ? 'due_soon' : 'ontime'
+    return shell
+  })
+
+  return {
+    mode: 'tickets',
+    clusters: sortClustersNatural(clusters, c => c.cluster),
+    generated_at: new Date().toISOString(),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Mode: Command
+// ---------------------------------------------------------------------------
+
+function compareCommandRows(a: WarRoomIncidentRow, b: WarRoomIncidentRow): number {
+  // 1. Unclassified first (amber fallback — needs triage)
+  const aUnclassified = !a.is_classified ? 0 : 1
+  const bUnclassified = !b.is_classified ? 0 : 1
+  if (aUnclassified !== bUnclassified) return aUnclassified - bUnclassified
+  // 2. Severity (RED > YELLOW > GREEN)
+  const sevRank: Record<Severity, number> = { RED: 0, YELLOW: 1, GREEN: 2 }
+  const sa = sevRank[a.severity] ?? 3
+  const sb = sevRank[b.severity] ?? 3
+  if (sa !== sb) return sa - sb
+  // 3. Priority
+  const prRank: Record<Priority, number> = { P1: 0, P2: 1, P3: 2 }
+  const pa = prRank[a.priority] ?? 3
+  const pb = prRank[b.priority] ?? 3
+  if (pa !== pb) return pa - pb
+  // 4. Recency — newest first
+  return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+}
+
+function worstSeverityAcrossRows(rows: WarRoomIncidentRow[]): Severity | null {
+  if (rows.length === 0) return null
+  if (rows.some(r => r.severity === 'RED' || r.priority === 'P1')) return 'RED'
+  if (rows.some(r => r.severity === 'YELLOW' || r.priority === 'P2')) return 'YELLOW'
+  return 'GREEN'
+}
+
+async function buildCommandResponse(
+  meta: Map<string, { name: string | null; status: string | null }>,
+  staffIndex: Map<string, StaffMember>,
+): Promise<WarRoomResponse> {
   const { data: rowsRaw, error } = await supabaseAdmin
     .from('incidents')
     .select(`
       id, cluster, title, priority, severity, category, created_at,
       escalation_due_at, escalated, situation_summary, is_classified,
-      raw_lark_text, sender_name, sender_open_id, assigned_to, status
+      raw_lark_text, sender_name, sender_open_id, assigned_to, status,
+      ticket_id, attention_required
     `)
-    .in('status', OPEN_STATUSES as unknown as string[])
+    .in('status', OPEN_INCIDENT_STATUSES as unknown as string[])
+    .eq('attention_required', true)
+    // Dedup: tickets are canonical when linked. The cross-group
+    // intelligence pipeline creates incidents for silent tickets
+    // and sets incidents.ticket_id — those show up in Tickets mode,
+    // never in Command mode.
+    .is('ticket_id', null)
     .order('created_at', { ascending: false })
     .limit(1500)
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    throw new Error(`command query: ${error.message}`)
   }
 
-  // 3. Project DB rows → WarRoomRow with pre-resolved owner_display.
-  //    Owner resolution happens here (server-side) so clients never
-  //    need to second-guess raw open_ids — they just render the label.
-  const rawRows = (rowsRaw ?? []) as Array<Omit<WarRoomRow, 'owner_display'> & { cluster: string | null }>
-  const rows: Array<WarRoomRow & { cluster: string | null }> = rawRows.map(row => ({
+  const rawRows = (rowsRaw ?? []) as Array<Omit<WarRoomIncidentRow, 'owner_display'> & { cluster: string | null }>
+  const rows: Array<WarRoomIncidentRow & { cluster: string | null }> = rawRows.map(row => ({
     ...row,
-    owner_display: ownerDisplayFor(row, staffIndex),
+    owner_display: ownerDisplayForIncident(row, staffIndex),
   }))
 
-  // 4. Bucket rows into (cluster → group) map.
-  //    We keep ALL rows per bucket so total/overdue counts reflect the
-  //    real open population, not the top-N truncation.
-  const byCluster = new Map<string, Record<WarRoomCategoryGroup, WarRoomRow[]>>()
+  const byCluster = new Map<string, WarRoomIncidentRow[]>()
   for (const row of rows) {
     if (!row.cluster) continue
-    const group = categoryGroup(row.category)
-    let buckets = byCluster.get(row.cluster)
-    if (!buckets) {
-      buckets = { maintenance: [], cleaning: [], move_in: [], move_out: [], incidents: [] }
-      byCluster.set(row.cluster, buckets)
-    }
-    buckets[group].push(row)
+    const list = byCluster.get(row.cluster) ?? []
+    list.push(row)
+    byCluster.set(row.cluster, list)
   }
 
-  // 4. Assemble the final cluster list. Include every cluster that has
-  //    a cluster_health_cache row (so empty clusters still render a
-  //    column with zeros) plus any cluster that appears only in the
-  //    incidents table (defensive against cache drift).
   const allClusterCodes = new Set<string>([
-    ...healthByCluster.keys(),
+    ...meta.keys(),
     ...byCluster.keys(),
   ])
 
-  const clusters: WarRoomCluster[] = [...allClusterCodes].map(code => {
-    const meta = healthByCluster.get(code)
-    const shell = emptyCluster(code, meta?.name ?? null, meta?.status ?? null)
-    const buckets = byCluster.get(code)
-    if (!buckets) return shell
-
-    for (const group of WAR_ROOM_GROUP_ORDER) {
-      const groupRows = buckets[group]
-      const sorted = [...groupRows].sort(compareRows)
-      shell[group] = {
-        rows: sorted.slice(0, WAR_ROOM_GROUP_LIMIT[group]),
-        total: groupRows.length,
-        overdue: groupRows.filter(isOverdue).length,
-      }
+  const clusters: WarRoomClusterCommand[] = [...allClusterCodes].map(code => {
+    const clusterMeta = meta.get(code)
+    const shell: WarRoomClusterCommand = {
+      cluster: code,
+      cluster_name: clusterMeta?.name ?? null,
+      worst_severity: null,
+      incidents: { rows: [], total: 0, overdue: 0 },
     }
+    const clusterRows = byCluster.get(code)
+    if (!clusterRows || clusterRows.length === 0) return shell
+
+    const sorted = [...clusterRows].sort(compareCommandRows)
+    const capped = sorted.slice(0, COMMAND_BAND_LIMIT)
+    const overdue = clusterRows.filter(r => {
+      if (!r.escalation_due_at || r.escalated) return false
+      return new Date(r.escalation_due_at).getTime() < Date.now()
+    }).length
+
+    shell.incidents = {
+      rows: capped,
+      total: clusterRows.length,
+      overdue,
+    }
+    shell.worst_severity = worstSeverityAcrossRows(sorted)
     return shell
   })
 
-  const sorted = sortClustersNatural(clusters, c => c.cluster)
-
-  return NextResponse.json({
-    clusters: sorted,
+  return {
+    mode: 'command',
+    clusters: sortClustersNatural(clusters, c => c.cluster),
     generated_at: new Date().toISOString(),
-  })
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GET
+// ---------------------------------------------------------------------------
+
+export async function GET(req: NextRequest) {
+  const url = new URL(req.url)
+  const modeParam = url.searchParams.get('mode')
+  const mode: WarRoomMode = modeParam === 'command' ? 'command' : 'tickets'
+
+  try {
+    const meta = await loadClusterMeta()
+
+    if (mode === 'tickets') {
+      const response = await buildTicketsResponse(meta)
+      return NextResponse.json(response)
+    }
+
+    const staffIndex = await buildStaffIndex()
+    const response = await buildCommandResponse(meta, staffIndex)
+    return NextResponse.json(response)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown'
+    console.error('[war-room]', mode, message)
+    return NextResponse.json({ error: message }, { status: 500 })
+  }
 }

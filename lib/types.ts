@@ -59,6 +59,17 @@ export type Incident = {
   situation_summary: string | null  // ≤140 char one-liner for war-room rows
   is_classified: boolean            // false = amber "[unclassified]" fallback
   raw_lark_text: string | null      // preserved raw Lark text for fallback render
+  // War Room Mode Split (migration 20260411200000)
+  // Filter for Command mode of /clusters. Currently populated by
+  // heuristic (P1 / unclassified / low-confidence / escalated); a
+  // dedicated 7th reasoning step can replace the heuristic later
+  // without changing this interface.
+  attention_required: boolean
+  // Cross-group intelligence ticket linkage (20260405073658). NOT a
+  // war-room field, but referenced by the Command mode dedup filter
+  // (Command excludes incidents with ticket_id set — the ticket is
+  // canonical in that case, the incident is the dup).
+  ticket_id: string | null
 }
 
 export type ReasoningStepName =

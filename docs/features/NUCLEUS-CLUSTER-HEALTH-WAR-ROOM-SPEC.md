@@ -8,39 +8,60 @@
 
 ## 1. Purpose
 
-Replace the current `/clusters` page, which reads like a ticket queue, with a **war-room situation board**. The commander (Lee) must scan 11 clusters × 5 categories and understand *what is actually happening* in 10 seconds — without reading ticket numbers, without clicking, without context-switching.
+Replace the current `/clusters` page with a two-mode war-room situation board. The commander (Lee) must scan 11 clusters and understand *what is actually happening* in 10 seconds — without reading ticket numbers, without clicking, without context-switching.
 
-Every row is a one-line situation report. The AI summary replaces the ticket title. The commander sees the situation; the operator opens detail to act.
+The page has **two modes toggled at the top**: **Tickets** (the operational pipeline — what work is open) and **Command** (the signal stream — what's coming at us that isn't yet a ticket). Same URL, same cluster-pill strip, same horizontal-scroll 11-column grid, same fixed-band layout — only the data layer swaps. Toggling preserves scroll position.
+
+**Why two modes:** Tickets and Incidents are fundamentally different data. Tickets are structured work items with SLAs, owners, and a lifecycle, sourced from the ops system. Incidents are unstructured Lark chat signals that may or may not become work, sourced from the classification pipeline. Mixing them in one column — as the current build does — causes the same underlying issue to appear twice and leaves the commander unable to tell work-to-do from signals-to-triage. Separating them gives each data source the treatment it deserves.
 
 ---
 
 ## 2. Layout
 
 - **Horizontal scroll**, one fixed 440px column per cluster, 11 total. No vertical scroll — strict 1-page height.
-- **Cluster pills strip** top-right, natural order `C1 → C11`. Each pill carries a severity dot (worst open in that cluster). Click → smooth-scroll to column + coral flash on header.
-- **Column order inside each cluster:** Maintenance (10) → Cleaning (3) → Move In (3) → Move Out (3) → Incidents (3).
+- **Cluster pills strip** top-right, natural order `C1 → C11`. Each pill carries a severity dot (worst open in that cluster, computed differently per mode — see §2.1).
+- **Mode toggle** top-left, segmented control `[Tickets] [Command]`. Default: Tickets. Toggling preserves scroll position and selected cluster.
+- **Tickets mode bands:** Maintenance (top 10) → Cleaning (top 3) → Move In (top 3) → Move Out (top 3).
+- **Command mode band:** single Incidents band showing only incidents where `attention_required = true` from the Reasoning Trace, sorted by severity → recency, capped at the vertical budget (~20 slots per cluster).
 
-**Count rationale:** Maintenance carries the diagnostic weight — volume, variety, and the clearest pattern signal (stack leaks, aircon clusters, electrical). The other four categories only need top 3 to answer "is this cluster's pipeline on fire?" If move-in has 17 open and the top 3 are all P1/overdue, the commander knows to ask Brittany without needing rows 4-5. The `+N more →` link carries the rest.
+**Count rationale (Tickets mode):** Maintenance carries the diagnostic weight — volume, variety, and the clearest pattern signal. The other three categories only need top 3 to answer "is this cluster's pipeline on fire?"
+
+**Filter rationale (Command mode):** the Reasoning Trace's `attention` step is literally the filter for what appears here. 220 raw incidents across 11 clusters would drown the commander; filtering on `attention_required` surfaces only the 3–5 per cluster that actually need Lee's eyes. This is the architectural consumer that validates the Reasoning Trace's attention step.
+
+### 2.1 Severity Dot on Cluster Pills
+
+The colored dot on each cluster pill reflects the *current mode's* worst state:
+- **Tickets mode:** worst SLA state across all open tickets in that cluster (overdue > due-soon > on-time)
+- **Command mode:** highest severity among `attention_required` incidents in that cluster
+
+This means flipping the toggle re-colors the pills, which is intentional — the pills should always reflect "what's hot in the view I'm looking at."
 
 ---
 
-## 3. Row Format — "Situation Report"
+## 3. Row Format — Situation Reports
 
-Every row is a 2-line card, always fully rendered (no expand-on-click).
+All rows are single-line 38px cards in both modes. Row content differs by mode:
 
-**Line 1** (compact, monospace, dim): `severity_dot · SLA_pill · age`
-- Severity dot: coral P1, amber P2, slate P3/P4
-- SLA pill: always shows *duration*, never bare "OVR"
-  - Overdue: filled coral `2h OVR`, `3d OVR`, `12h OVR`
-  - Due soon (<24h): hollow amber `4h`, `18h`
-  - Otherwise: hidden
-- Age: plain dim text `5d`, `3h`
+### 3.1 Tickets Mode Row
+**Line 1:** severity dot · SLA pill (`2h OVR`, `3d OVR`, `12h`) · age · human-written ticket title · owner
+- Source: operational ticketing tables
+- Ranking: **overdue first, then age descending within each SLA bucket**
+- The human title is shown as-is (trusted)
+- **AI summary available on hover tooltip** — the AI interpretation is one hover away but does not override the human's words by default. Matches the transparency-before-autonomy philosophy.
+- Ticket# visible on hover and in detail drawer, never on the main row
 
-**Line 2** (the context): AI-generated situation summary in plain English, ≤140 chars, owner trailing in dim text.
-- Example: *"Leaking incoming pipe at 11-01, flooding risk to units below, tenant reports water pooling — Ali"*
-- Owner is always the first name from `staff_directory` resolution.
+### 3.2 Command Mode Row
+**Line 1 (compact, monospace dim):** severity dot · SLA pill · age
+**Line 2 (the context):** AI-generated situation summary, ≤140 chars, owner trailing in dim text
+- Source: Lark connector + classification pipeline
+- Ranking: severity → recency, filtered to `attention_required = true` only
+- **AI summary always visible** — load-bearing here because raw Lark text is messy
+- `[unclassified]` amber fallback renders first 80 chars of raw Lark text when classification hasn't completed yet
+- Row height: 2-line cards at ~54px. Because Command mode has only one band, the taller rows fit comfortably in the vertical budget.
 
-**No ticket numbers on the main view.** Ticket# surfaces only on hover tooltip and in the detail drawer on click.
+### 3.3 Why Asymmetric Treatment
+
+Tickets have human-written titles from the ops system — the AI's marginal value is "clean up shorthand and add context," nice but not load-bearing. Hover is a fair cost. Incidents come from raw Lark chat where the AI is doing the load-bearing work of turning "aircond tak sejuk dah 3 hari" into a diagnosed situation. Each data source gets the treatment matching how much the AI is actually contributing.
 
 ---
 
@@ -140,4 +161,4 @@ Still over a strict 900px budget, but the gap is now manageable. Real-world fit 
 
 ## 11. Claude Code Prompt
 
-> Build the Cluster Health war-room view per `docs/features/NUCLEUS-CLUSTER-HEALTH-WAR-ROOM-SPEC.md`: horizontal-scroll 11-column layout with **fixed-band grid** (Maintenance always rows 1–10, Cleaning/MoveIn/MoveOut/Incidents always 3 rows each, empty slots render as dotted placeholders, strict top-N enforcement so no section ever overflows its band). 2-line situation-report rows with always-visible AI summary + trailing owner, P1 coral tinting, `[unclassified]` amber fallback showing raw Lark text, overdue pills with explicit duration (`2h OVR`, `3d OVR`), category headers with `total · N ovr` diagnostics. **Fix the owner resolution bug system-wide: `resolveOwnerName()` must return `— unknown` on failure, never raw `cli_xxx` or `ou_xxx` open_ids.** Add shared `sortClustersNatural()` util and apply across Command Center, Briefings, Watchdog, Mobile PWA, and Learning Engine. Add `ai_summary`, `is_classified`, `raw_lark_text` fields to the incidents table.
+> Restructure `/clusters` into a two-mode war-room per `docs/features/NUCLEUS-CLUSTER-HEALTH-WAR-ROOM-SPEC.md`: segmented toggle `[Tickets] [Command]` top-left, preserving scroll position and selected cluster on mode change. **Tickets mode** — 4 bands (Maintenance top 10, Cleaning/MoveIn/MoveOut top 3 each), 1-line rows showing human ticket title + SLA/age/owner, sorted by overdue-first then age-desc, AI summary on hover tooltip. **Command mode** — single Incidents band filtered to `attention_required = true` from the Reasoning Trace, 2-line rows with always-visible AI summary, `[unclassified]` amber raw-Lark fallback, sorted severity→recency. Fixed-band grid with dotted placeholder slots, strict top-N enforcement. Cluster pill severity dots recompute per mode. Fix `resolveOwnerName()` to return `— unknown` on failure system-wide, never raw `cli_xxx`/`ou_xxx`. Apply `sortClustersNatural()` system-wide across Command Center, Briefings, Watchdog, Mobile PWA, Learning Engine. Add `ai_summary`, `is_classified`, `raw_lark_text` fields to incidents. **Critical data-source separation:** Tickets mode reads only from operational ticketing tables, Command mode reads only from the incidents/Lark classification pipeline — the same issue must never appear in both views.

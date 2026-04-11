@@ -2,7 +2,7 @@
 
 import { formatDistanceToNowStrict } from 'date-fns'
 import { OverduePill } from './OverduePill'
-import type { WarRoomRow } from '@/app/api/clusters/war-room/route'
+import type { WarRoomIncidentRow } from '@/app/api/clusters/war-room/route'
 
 /**
  * SituationRow — 2-line war-room situation report.
@@ -55,7 +55,7 @@ function ageLabel(createdAt: string): string {
 }
 
 interface SituationRowProps {
-  row: WarRoomRow
+  row: WarRoomIncidentRow
   onClick?: (id: string) => void
 }
 
