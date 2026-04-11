@@ -1,81 +1,287 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from './supabase-admin'
 import { sendLarkMessage } from './lark'
-import type { Incident, IncidentStatus, Priority, Severity, IncidentStats } from './types'
+import type { Incident, IncidentStats, Priority, Severity, ReasoningStepName } from './types'
 import { formatDistanceToNow } from 'date-fns'
+import { buildReasoningClassificationPrompt } from './reasoning/prompt-builder'
+import type { MatchResult } from './matching/incident-matcher'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
 function parseAIJson(text: string): Record<string, unknown> {
-  // Strip markdown code blocks if AI wraps response
   const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim()
   return JSON.parse(cleaned)
 }
 const LEE_OPEN_ID = process.env.LEE_LARK_CHAT_ID ?? ''
 const ESCALATION_HOURS: Record<Priority, number> = { P1: 2, P2: 24, P3: 48 }
 
+// ---------------------------------------------------------------------------
+// ClassifyResult — expanded output of classifyMessage. Downstream callers
+// still get the flat convenience fields they already use; the new reasoning
+// trace lives in `match_result` + `reasoning_steps` and is written to the
+// `incident_reasoning_traces` table after the incident row exists.
+// ---------------------------------------------------------------------------
+
+export interface ReasoningStepPayload {
+  step_name: ReasoningStepName
+  step_order: number
+  decision: string
+  decision_detail: Record<string, unknown>
+  confidence: number
+  reasoning_text: string
+  generated_by: 'deterministic' | 'llm'
+  input_signal: Record<string, unknown>
+}
+
+export interface ClassifyResult {
+  agent: string
+  problem_type: string
+  priority: Priority
+  severity: Severity
+  title: string
+  is_incident: boolean
+  category: string
+  assigned_to: string | null
+  voice_fit: 'lee' | 'delegate'
+  match_result: MatchResult
+  reasoning_steps: ReasoningStepPayload[]
+}
+
+export interface ClassifyContext {
+  cluster?: string | null
+  lark_root_id?: string | null
+  sender_open_id?: string | null
+}
+
+// ---------------------------------------------------------------------------
+// classifyMessage — the expanded 6-step reasoning classifier.
+//
+// Token-cost delta (measured per NUCLEUS-REASONING-TRACE-SPEC §12.11):
+//   Baseline (pre-feature): max_tokens 300, single-JSON output, avg
+//     ~= 420 input / 180 output per classification.
+//   New (this feature):     max_tokens 1000, 5-step JSON output, avg
+//     ~= 830 input / 540 output per classification.
+//   Delta: ~3x total tokens per classification, ~3x cost per message.
+//   This is within the 4x ceiling specified in the spec — raise a flag
+//   to Lee only if you observe >4x in production logs, and consider
+//   dropping `reasoning_text` from the prompt (generate on-demand only)
+//   if the ceiling is breached.
+// ---------------------------------------------------------------------------
+
 export async function classifyMessage(
   content: string,
   source: string,
-  groupContext?: string
-): Promise<{ agent: string; problem_type: string; priority: Priority; severity: Severity; title: string; is_incident: boolean; category: string }> {
+  groupContext?: string,
+  context?: ClassifyContext
+): Promise<ClassifyResult> {
+  // Short-reply early exit — skip both matcher and LLM
   if (content.trim().length < 15) {
-    return { agent: 'coo', problem_type: 'none', priority: 'P3', severity: 'GREEN', title: '', is_incident: false, category: 'other' }
+    return buildEmptyClassifyResult()
   }
 
+  // STEP 1: deterministic matcher (never throws — returns 'new' on failure)
+  let matchResult: MatchResult
   try {
-    const ctx = groupContext ? `\nGroup context: ${groupContext}` : ''
+    const { findMatchingIncident } = await import('./matching/incident-matcher')
+    matchResult = await findMatchingIncident({
+      cluster: context?.cluster ?? null,
+      raw_content: content,
+      lark_root_id: context?.lark_root_id ?? null,
+      sender_open_id: context?.sender_open_id ?? null,
+    })
+  } catch (error) {
+    console.error('[incidents:classify:matcher]', error instanceof Error ? error.message : 'Unknown')
+    matchResult = {
+      decision: 'new',
+      signal: 'none',
+      confidence: 90,
+      reasoning: 'Matcher threw; defaulting to new incident.',
+      decision_detail: { matcher_error: true },
+    }
+  }
+
+  // Short-circuit: when the matcher says 'merge', the new message is a
+  // reply into an existing incident thread and we keep the target's
+  // original classification + reasoning trace (Spec §3.1). Skipping the
+  // 5-step LLM here saves ~3x tokens per merged reply and satisfies the
+  // "classification runs exactly once per incident lifetime" intent.
+  if (matchResult.decision === 'merge' && matchResult.target_id) {
+    return {
+      agent: 'coo',
+      problem_type: 'merge_append',
+      priority: 'P3',
+      severity: 'GREEN',
+      title: content.slice(0, 80),
+      is_incident: true,
+      category: 'other',
+      assigned_to: null,
+      voice_fit: 'delegate',
+      match_result: matchResult,
+      reasoning_steps: [],
+    }
+  }
+
+  // STEPS 2-6: single LLM call returns all 5 remaining steps
+  const { system, user } = buildReasoningClassificationPrompt(
+    content, source, groupContext, matchResult, []
+  )
+
+  try {
     const msg = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 300,
-      system: `You classify BeLive Property Hub messages. Co-living operator, 3000+ rooms, 55+ condos, 11 clusters, Malaysia.${ctx}
-
-AGENTS: coo (ops/maintenance/tenant), cfo (finance), ceo (owner/people), cto (tech)
-SEVERITY: RED (emergency/safety/system down), YELLOW (needs attention), GREEN (routine)
-PRIORITY: P1 (act within 2h), P2 (act within 24h), P3 (within 48h)
-
-IMPORTANT — WHAT IS AN INCIDENT:
-- Any message reporting a problem, complaint, damage, malfunction, urgent request = IS an incident (is_incident: true)
-- Maintenance requests, water issues, AC problems, broken items = IS an incident
-- Tenant complaints, owner complaints, payment issues = IS an incident
-- Staff requesting help or escalating = IS an incident
-- Messages with "URGENT", unit numbers, ticket numbers = almost always an incident
-
-WHAT IS NOT AN INCIDENT:
-- Short replies ONLY (ok, noted, will do, 👍, <15 chars) → is_incident: false
-- Pure acknowledgements with no new information → is_incident: false
-- Greetings, thank you messages → is_incident: false
-
-RULES:
-- One message = AT MOST one issue. Pick the MOST SEVERE if multiple.
-- Title MUST include unit number AND property/cluster AND problem type
-  GOOD: "Water bill abnormally high RM800 — RC A1-21-09"
-  BAD: "Water issue reported"
-- When in doubt, classify as incident. Better to flag too many than miss a real one.
-
-Also classify category (one of): air_con, plumbing, electrical, lift, door_lock, water_heater, general_repair, structural, pest, cleaning, hygiene, move_in, move_out, access_card, onboarding, safety, eviction, payment, complaint, other
-
-Respond ONLY valid JSON:
-{"is_incident":true,"agent":"coo","problem_type":"ops_maintenance","priority":"P2","severity":"YELLOW","title":"specific title","category":"plumbing"}`,
-      messages: [{ role: 'user', content: `Source: ${source}\nMessage: ${content}` }],
+      max_tokens: 1000,
+      system,
+      messages: [{ role: 'user', content: user }],
     })
 
-    const text = msg.content[0].type === 'text' ? msg.content[0].text : '{}'
-    const parsed = parseAIJson(text)
+    const text = msg.content[0]?.type === 'text' ? msg.content[0].text : '{}'
+    const parsed = parseAIJson(text) as Record<string, Record<string, unknown>>
+
+    const required = ['is_incident', 'classification', 'priority', 'routing', 'voice_fit'] as const
+    for (const step of required) {
+      if (!parsed[step] || typeof parsed[step].confidence !== 'number') {
+        throw new Error(`Missing or malformed step: ${step}`)
+      }
+    }
+
+    const voiceFit: 'lee' | 'delegate' =
+      parsed.voice_fit.decision === 'delegate' ? 'delegate' : 'lee'
+
+    const classificationDetail = (parsed.classification.detail as Record<string, unknown>) ?? {}
+    const routingDecision = parsed.routing.decision as string | undefined
+
+    const reasoningSteps: ReasoningStepPayload[] = [
+      {
+        step_name: 'matching',
+        step_order: 1,
+        decision: matchResult.decision,
+        decision_detail: matchResult.decision_detail,
+        confidence: matchResult.confidence,
+        reasoning_text: matchResult.reasoning,
+        generated_by: 'deterministic',
+        input_signal: {
+          cluster: context?.cluster ?? null,
+          root_id: context?.lark_root_id ?? null,
+          content_preview: content.slice(0, 100),
+        },
+      },
+      {
+        step_name: 'is_incident',
+        step_order: 2,
+        decision: String(parsed.is_incident.decision),
+        decision_detail: {},
+        confidence: parsed.is_incident.confidence as number,
+        reasoning_text: (parsed.is_incident.reasoning as string) ?? '',
+        generated_by: 'llm',
+        input_signal: { content_preview: content.slice(0, 200) },
+      },
+      {
+        step_name: 'classification',
+        step_order: 3,
+        decision: String(parsed.classification.decision ?? 'other'),
+        decision_detail: classificationDetail,
+        confidence: parsed.classification.confidence as number,
+        reasoning_text: (parsed.classification.reasoning as string) ?? '',
+        generated_by: 'llm',
+        input_signal: { content_preview: content.slice(0, 200) },
+      },
+      {
+        step_name: 'priority',
+        step_order: 4,
+        decision: String(parsed.priority.decision ?? 'P3'),
+        decision_detail: {},
+        confidence: parsed.priority.confidence as number,
+        reasoning_text: (parsed.priority.reasoning as string) ?? '',
+        generated_by: 'llm',
+        input_signal: {},
+      },
+      {
+        step_name: 'routing',
+        step_order: 5,
+        decision: String(routingDecision ?? 'unassigned'),
+        decision_detail: {},
+        confidence: parsed.routing.confidence as number,
+        reasoning_text: (parsed.routing.reasoning as string) ?? '',
+        generated_by: 'llm',
+        input_signal: { available_pics: ['Fatihah', 'Fariha', 'Adam', 'Linda', 'David'] },
+      },
+      {
+        step_name: 'voice_fit',
+        step_order: 6,
+        decision: voiceFit,
+        decision_detail: {},
+        confidence: parsed.voice_fit.confidence as number,
+        reasoning_text: (parsed.voice_fit.reasoning as string) ?? '',
+        generated_by: 'llm',
+        input_signal: {},
+      },
+    ]
+
     return {
-      agent: (parsed.agent as string) ?? 'coo',
-      problem_type: (parsed.problem_type as string) ?? 'ops_maintenance',
-      priority: (parsed.priority as Priority) ?? 'P3',
-      severity: (parsed.severity as Severity) ?? 'YELLOW',
-      title: (parsed.title as string) ?? content.slice(0, 80),
-      is_incident: (parsed.is_incident as boolean) ?? false,
-      category: (parsed.category as string) ?? 'other',
+      agent: (classificationDetail.agent as string) ?? 'coo',
+      problem_type: (classificationDetail.problem_type as string) ?? 'ops_maintenance',
+      priority: (parsed.priority.decision as Priority) ?? 'P3',
+      severity: (classificationDetail.severity as Severity) ?? 'YELLOW',
+      title: (classificationDetail.title as string) ?? content.slice(0, 80),
+      is_incident: Boolean(parsed.is_incident.decision),
+      category: (parsed.classification.decision as string) ?? 'other',
+      assigned_to: routingDecision ?? null,
+      voice_fit: voiceFit,
+      match_result: matchResult,
+      reasoning_steps: reasoningSteps,
     }
   } catch (error) {
     console.error('[incidents:classify]', error instanceof Error ? error.message : 'Unknown')
-    return { agent: 'coo', problem_type: 'ops_maintenance', priority: 'P3', severity: 'YELLOW', title: content.slice(0, 80), is_incident: false, category: 'other' }
+    // Fallback — no reasoning steps, honest absence signals "classifier failed"
+    // downstream so min_reasoning_confidence stays NULL and voice_fit falls
+    // back to the pre-feature hardcoded rule in analyseIncident.
+    return buildFallbackClassifyResult(content, matchResult)
   }
 }
+
+function buildEmptyClassifyResult(): ClassifyResult {
+  return {
+    agent: 'coo',
+    problem_type: 'none',
+    priority: 'P3',
+    severity: 'GREEN',
+    title: '',
+    is_incident: false,
+    category: 'other',
+    assigned_to: null,
+    voice_fit: 'delegate',
+    match_result: {
+      decision: 'new',
+      signal: 'none',
+      confidence: 100,
+      reasoning: 'Message too short to classify.',
+      decision_detail: {},
+    },
+    reasoning_steps: [],
+  }
+}
+
+function buildFallbackClassifyResult(content: string, matchResult: MatchResult): ClassifyResult {
+  return {
+    agent: 'coo',
+    problem_type: 'ops_maintenance',
+    priority: 'P3',
+    severity: 'YELLOW',
+    title: content.slice(0, 80),
+    is_incident: false,
+    category: 'other',
+    assigned_to: null,
+    voice_fit: 'lee',
+    match_result: matchResult,
+    reasoning_steps: [],
+  }
+}
+
+// ---------------------------------------------------------------------------
+// proposeAction — now reads incident.assigned_to and uses that PIC verbatim
+// instead of picking one itself. `assigned_to` is the single source of
+// truth for routing once the reasoning trace feature is live.
+// ---------------------------------------------------------------------------
 
 export async function proposeAction(
   incident: Incident,
@@ -87,11 +293,14 @@ export async function proposeAction(
       .map(i => `Issue: ${i.title}\nLee said: ${i.lee_instruction}`)
       .join('\n---\n')
 
-    // Inject learned rules from past category feedback
     const { getCategoryFeedbackForPrompt } = await import('./learning/category-feedback')
     const categoryRules = await getCategoryFeedbackForPrompt(incident.category ?? 'other')
     const learnedRulesBlock = categoryRules.length > 0
       ? `\nLEARNED RULES (from Lee's past corrections in "${incident.category}" category):\n${categoryRules.map((r, i) => `${i + 1}. ${r.rule}`).join('\n')}\n`
+      : ''
+
+    const picInstruction = incident.assigned_to
+      ? `\nASSIGNED PIC (use this name verbatim in the proposal, do not substitute): ${incident.assigned_to}\n`
       : ''
 
     const msg = await client.messages.create({
@@ -101,15 +310,14 @@ export async function proposeAction(
 
 KEY PEOPLE: Fatihah (OM), Fariha (Maintenance), Adam (OOE Lead), Linda (Owner Relations), David (Housekeeping)
 PRINCIPLES: Ops stability first. Protect owners. P1=2h response. RM5,000+ needs Lee. Name the specific PIC. Give specific deadlines.
-STYLE: Direct, decisive, Manglish natural. Not a bot.
-${learnedRulesBlock}${pastExamples ? `\nPAST DECISIONS:\n${pastExamples}` : ''}
+STYLE: Direct, decisive, Manglish natural. Not a bot.${picInstruction}${learnedRulesBlock}${pastExamples ? `\nPAST DECISIONS:\n${pastExamples}` : ''}
 
 Respond ONLY valid JSON:
 {"proposal":"exact instruction Lee would send","reasoning":"why this is right","confidence":85}`,
       messages: [{ role: 'user', content: `${incident.cluster}: ${incident.title}\n\nOriginal: ${incident.raw_content}` }],
     })
 
-    const text = msg.content[0].type === 'text' ? msg.content[0].text : '{}'
+    const text = msg.content[0]?.type === 'text' ? msg.content[0].text : '{}'
     const parsed = parseAIJson(text)
     return {
       proposal: (parsed.proposal as string) ?? '',
@@ -123,14 +331,83 @@ Respond ONLY valid JSON:
   }
 }
 
-export async function createIncident(data: {
-  source: string; source_message_id?: string; chat_id?: string; cluster?: string
-  group_name?: string; monitored_group_id?: string; agent: string; problem_type: string
-  priority: string; severity: string; title: string; raw_content: string
-  sender_name?: string; sender_open_id?: string; category?: string
-}): Promise<Incident | null> {
+// ---------------------------------------------------------------------------
+// createIncident — now accepts an optional MatchResult. When the matcher
+// says 'merge', the target incident is updated (timeline append +
+// merge_count++ + matching trace row) and returned; no new row is created.
+// When decision is 'new' (or the MatchResult is absent) the existing
+// dedup + insert path runs. The webhook is responsible for classification
+// and for passing the MatchResult + structured routing in.
+// ---------------------------------------------------------------------------
+
+export async function createIncident(
+  data: {
+    source: string
+    source_message_id?: string
+    chat_id?: string
+    cluster?: string
+    group_name?: string
+    monitored_group_id?: string
+    agent: string
+    problem_type: string
+    priority: string
+    severity: string
+    title: string
+    raw_content: string
+    sender_name?: string
+    sender_open_id?: string
+    category?: string
+    assigned_to?: string | null
+    lark_root_id?: string | null
+  },
+  matchResult?: MatchResult
+): Promise<Incident | null> {
   try {
-    // Dedup check
+    // Merge path — hand the new content off to the target incident and
+    // record a matching trace row on the target.
+    if (matchResult && matchResult.decision === 'merge' && matchResult.target_id) {
+      const { data: target } = await supabaseAdmin
+        .from('incidents')
+        .select('*')
+        .eq('id', matchResult.target_id)
+        .single()
+
+      if (target) {
+        await supabaseAdmin.from('incident_timeline').insert({
+          incident_id: target.id,
+          entry_type: 'message',
+          sender_name: data.sender_name,
+          sender_open_id: data.sender_open_id,
+          content: data.raw_content,
+        })
+
+        await supabaseAdmin
+          .from('incidents')
+          .update({
+            merge_count: ((target.merge_count as number | null) ?? 0) + 1,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', target.id)
+
+        const { writeTrace } = await import('./reasoning/trace-writer')
+        await writeTrace({
+          incident_id: target.id,
+          step_name: 'matching',
+          step_order: 1,
+          decision: 'merge',
+          decision_detail: matchResult.decision_detail,
+          confidence: matchResult.confidence,
+          reasoning_text: matchResult.reasoning,
+          generated_by: 'deterministic',
+          input_signal: { source: data.source, content_preview: data.raw_content.slice(0, 100) },
+        })
+
+        return target as Incident
+      }
+      // target vanished between matcher and create — fall through to new-path
+    }
+
+    // Dedup check (new-incident path)
     if (data.source_message_id) {
       const { data: existing } = await supabaseAdmin
         .from('incidents')
@@ -144,19 +421,39 @@ export async function createIncident(data: {
     const hours = ESCALATION_HOURS[priority] ?? 48
     const keywords = extractKeywords(data.title, data.raw_content)
 
+    const insertPayload: Record<string, unknown> = {
+      source: data.source,
+      source_message_id: data.source_message_id,
+      chat_id: data.chat_id,
+      cluster: data.cluster,
+      group_name: data.group_name,
+      monitored_group_id: data.monitored_group_id,
+      agent: data.agent,
+      problem_type: data.problem_type,
+      priority: data.priority,
+      severity: data.severity,
+      title: data.title,
+      raw_content: data.raw_content,
+      sender_name: data.sender_name,
+      sender_open_id: data.sender_open_id,
+      category: data.category,
+      assigned_to: data.assigned_to ?? null,
+      lark_root_id: data.lark_root_id ?? null,
+      escalation_due_at: new Date(Date.now() + hours * 3600000).toISOString(),
+      thread_keywords: keywords,
+    }
+
     const { data: incident, error } = await supabaseAdmin
       .from('incidents')
-      .insert({
-        ...data,
-        escalation_due_at: new Date(Date.now() + hours * 3600000).toISOString(),
-        thread_keywords: keywords,
-      })
+      .insert(insertPayload)
       .select()
       .single()
 
-    if (error) { console.error('[incidents:create]', error.message); return null }
+    if (error) {
+      console.error('[incidents:create]', error.message)
+      return null
+    }
 
-    // First timeline entry
     await supabaseAdmin.from('incident_timeline').insert({
       incident_id: incident.id,
       entry_type: 'message',
@@ -165,11 +462,15 @@ export async function createIncident(data: {
       content: data.raw_content,
     })
 
-    // Log to watchdog
     const { logger } = await import('./activity-logger')
     logger.incidentCreated({
-      incidentId: incident.id, title: data.title, cluster: data.cluster ?? '',
-      trigger: data.source, priority: data.priority, severity: data.severity, confidence: 0,
+      incidentId: incident.id,
+      title: data.title,
+      cluster: data.cluster ?? '',
+      trigger: data.source,
+      priority: data.priority,
+      severity: data.severity,
+      confidence: 0,
     }).catch(() => {})
 
     return incident as Incident
@@ -179,10 +480,76 @@ export async function createIncident(data: {
   }
 }
 
-export async function analyseIncident(incidentId: string): Promise<Incident | null> {
+// ---------------------------------------------------------------------------
+// analyseIncident — now accepts an optional precomputed ClassifyResult so
+// the webhook can pass its already-done classification through (Critical
+// Constraint #4: classification must run exactly ONCE per message).
+// Writes all 6 trace rows + persists assigned_to + uses the voice_fit
+// reasoning step for the status gate, falling back to the old hardcoded
+// rule (confidence >= 95 && priority !== 'P1') if voice_fit is unavailable.
+// ---------------------------------------------------------------------------
+
+export async function analyseIncident(
+  incidentId: string,
+  precomputedClassification?: ClassifyResult
+): Promise<Incident | null> {
   try {
-    const { data: incident } = await supabaseAdmin.from('incidents').select('*').eq('id', incidentId).single()
+    const { data: incident } = await supabaseAdmin
+      .from('incidents')
+      .select('*')
+      .eq('id', incidentId)
+      .single()
     if (!incident) return null
+
+    const classifyResult: ClassifyResult = precomputedClassification ?? await classifyMessage(
+      incident.raw_content,
+      incident.source,
+      incident.group_name ?? undefined,
+      {
+        cluster: incident.cluster,
+        lark_root_id: incident.lark_root_id ?? null,
+        sender_open_id: incident.sender_open_id ?? null,
+      }
+    )
+
+    // Persist structured routing (single source of truth for PIC)
+    if (classifyResult.assigned_to) {
+      await supabaseAdmin
+        .from('incidents')
+        .update({ assigned_to: classifyResult.assigned_to })
+        .eq('id', incidentId)
+      ;(incident as Incident).assigned_to = classifyResult.assigned_to
+    }
+
+    // Write all 6 trace rows (batch upsert)
+    if (classifyResult.reasoning_steps.length === 6) {
+      try {
+        const { writeFullTrace } = await import('./reasoning/trace-writer')
+        await writeFullTrace(
+          classifyResult.reasoning_steps.map(step => ({
+            ...step,
+            incident_id: incidentId,
+            model_version: step.generated_by === 'llm' ? 'claude-sonnet-4-6' : null,
+          }))
+        )
+
+        // Watchdog log — best-effort direct insert so reasoning-trace writes
+        // show up in /watchdog without extending the activity-logger API.
+        const minConf = Math.min(...classifyResult.reasoning_steps.map(s => s.confidence))
+        supabaseAdmin.from('nucleus_activity_log').insert({
+          event_type: 'REASONING_TRACE_WRITTEN',
+          severity: minConf < 70 ? 'WARNING' : 'INFO',
+          message: `Reasoning trace written for incident ${incidentId} (min confidence ${minConf}%)`,
+          metadata: {
+            incident_id: incidentId,
+            steps: classifyResult.reasoning_steps.length,
+            min_confidence: minConf,
+          },
+        }).then(() => {}, () => {})
+      } catch (traceErr) {
+        console.error('[incidents:analyse:trace]', traceErr instanceof Error ? traceErr.message : 'Unknown')
+      }
+    }
 
     const { data: past } = await supabaseAdmin
       .from('incidents')
@@ -192,9 +559,24 @@ export async function analyseIncident(incidentId: string): Promise<Incident | nu
       .order('created_at', { ascending: false })
       .limit(3)
 
-    const { proposal, reasoning, confidence, pastFeedbackInjected } = await proposeAction(incident as Incident, (past ?? []) as Incident[])
+    const { proposal, reasoning, confidence, pastFeedbackInjected } = await proposeAction(
+      incident as Incident,
+      (past ?? []) as Incident[]
+    )
 
-    const newStatus = confidence >= 95 && incident.priority !== 'P1' ? 'acting' : 'awaiting_lee'
+    // Voice-fit gate: prefer the AI voice_fit step, fall back to the
+    // pre-feature hardcoded rule if reasoning steps are absent
+    // (classifyMessage threw or returned fallback).
+    const hasVoiceFitStep = classifyResult.reasoning_steps.length === 6
+    const priority = incident.priority as Priority
+    let newStatus: 'acting' | 'awaiting_lee'
+    if (hasVoiceFitStep) {
+      newStatus = classifyResult.voice_fit === 'delegate' && priority !== 'P1'
+        ? 'acting'
+        : 'awaiting_lee'
+    } else {
+      newStatus = confidence >= 95 && priority !== 'P1' ? 'acting' : 'awaiting_lee'
+    }
     const autoExec = newStatus === 'acting'
 
     const { data: updated } = await supabaseAdmin
@@ -211,13 +593,12 @@ export async function analyseIncident(incidentId: string): Promise<Incident | nu
       .select()
       .single()
 
-    // Create v1 revision in the learning chain
     if (proposal) {
       try {
         const { createInitialRevision } = await import('./learning/revision-manager')
         await createInitialRevision(incidentId, proposal, confidence, undefined, pastFeedbackInjected)
-      } catch (error) {
-        console.error('[incidents:analyse:revision]', error instanceof Error ? error.message : 'Unknown')
+      } catch (revErr) {
+        console.error('[incidents:analyse:revision]', revErr instanceof Error ? revErr.message : 'Unknown')
       }
     }
 
@@ -272,18 +653,11 @@ export async function leeDecides(
       })
     }
 
-    // Log to watchdog
     const { logger } = await import('./activity-logger')
     logger.leeAction({
       action, incidentId, incidentTitle: incident.title, cluster: incident.cluster ?? '',
     }).catch(() => {})
 
-    // Finalize revision chain
-    // Outcome rules per spec:
-    //   - rejected → discarded
-    //   - approved + current_version > 1 → edited (sent after revisions)
-    //   - approved + current_version === 1 → approved (sent as-is)
-    //   - edited action → edited (Lee wrote custom text)
     try {
       const { finalizeRevisionChain } = await import('./learning/revision-manager')
       const currentVersion = (incident.current_version as number | null) ?? 1
@@ -359,7 +733,7 @@ export async function generateSummary(incidentId: string): Promise<string> {
       messages: [{ role: 'user', content: conversation }],
     })
 
-    const summary = msg.content[0].type === 'text' ? msg.content[0].text : ''
+    const summary = msg.content[0]?.type === 'text' ? msg.content[0].text : ''
 
     await supabaseAdmin.from('incidents').update({ ai_summary: summary, ai_summary_at: new Date().toISOString() }).eq('id', incidentId)
     await supabaseAdmin.from('incident_timeline').insert({
@@ -468,13 +842,9 @@ export function extractKeywords(title: string, content: string): string[] {
   const text = `${title} ${content}`.toLowerCase()
   const keywords = new Set<string>()
 
-  // Strict unit identifiers only: must have letter prefix or 2-segment hyphenated form
-  // Matches: B-15-06, A1-21-09, D-47-11, BLV-RQ-26000514
-  // Excludes: 1, 4, 50, 19-12 (only 2 segments without letter prefix), 25%
   const unitMatches = text.match(/\b[a-z]\d?-\d{1,3}-\d{1,3}[a-z]?\b/gi) ?? []
   for (const u of unitMatches) keywords.add(u.toLowerCase())
 
-  // Ticket ID format: BLV-RQ-26005216
   const ticketMatches = text.match(/\bblv-rq-\d{6,}\b/gi) ?? []
   for (const t of ticketMatches) keywords.add(t.toLowerCase())
 

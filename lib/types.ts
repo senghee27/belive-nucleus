@@ -49,7 +49,48 @@ export type Incident = {
   resolution_note: string | null
   auto_executed: boolean
   tags: string[]
+  // Reasoning Trace + Backend Upgrade (migration 20260411000000)
+  lark_root_id: string | null
+  assigned_to: string | null
+  min_reasoning_confidence: number | null
+  merged_from_incident_id: string | null
+  merge_count: number
 }
+
+export type ReasoningStepName =
+  | 'matching'
+  | 'is_incident'
+  | 'classification'
+  | 'priority'
+  | 'routing'
+  | 'voice_fit'
+
+export type ReasoningTrace = {
+  id: string
+  incident_id: string
+  step_name: ReasoningStepName
+  step_order: number
+  decision: string
+  decision_detail: Record<string, unknown>
+  confidence: number
+  reasoning_text: string
+  narrative_text: string | null
+  narrative_generated_at: string | null
+  model_version: string | null
+  generated_by: 'deterministic' | 'llm'
+  input_signal: Record<string, unknown>
+  created_at: string
+}
+
+export const REASONING_FEEDBACK_TAGS = [
+  'wrong_matching',
+  'wrong_classification',
+  'wrong_priority',
+  'wrong_routing',
+  'wrong_voice_fit',
+] as const
+
+export type ReasoningFeedbackTag = typeof REASONING_FEEDBACK_TAGS[number]
 
 export type IncidentTimeline = {
   id: string
@@ -237,6 +278,7 @@ export type ProposalRevision = {
   past_feedback_injected: boolean
   created_at: string
   decided_at: string | null
+  reasoning_feedback_tags: ReasoningFeedbackTag[]
 }
 
 export type RevisionFeedback = {

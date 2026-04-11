@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
 import { RefreshCw, Copy, CheckCircle, ArrowUp, Archive, Send, X, ChevronDown, ChevronUp, FlaskConical } from 'lucide-react'
 import { ProposalRevisionPanel } from './ProposalRevisionPanel'
+import { ReasoningPanel } from './ReasoningPanel'
 import { formatDistanceToNow } from 'date-fns'
 import type { Incident, IncidentTimeline } from '@/lib/types'
 
@@ -207,6 +208,9 @@ export function IncidentDetail({ incident, onDecide, onResolve, loading }: Props
             </button>
             {summaryOpen && <p className="text-[10px] text-[#8A9BB8] leading-relaxed">{summary ?? 'Tap ↻ to generate'}</p>}
           </div>
+
+          {/* Reasoning Trace — 6-step per-step reasoning above the proposal */}
+          <ReasoningPanel incidentId={incident.id} />
 
           {/* Proposed Action — with revision learning panel */}
           {incident.ai_proposal && (

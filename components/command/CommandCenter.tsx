@@ -397,7 +397,15 @@ function IncidentRow({ incident: i, onClick }: { incident: Incident; onClick: ()
     <tr onClick={onClick} data-incident-id={i.id}
       className={`border-b border-[#1A2035]/30 cursor-pointer transition-colors hover:bg-[#111D30] group ${isSilent ? 'bg-[rgba(155,109,255,0.06)]' : ''}`}>
       <td className="p-2">
-        <span className={`block w-2 h-2 rounded-full ${i.priority === 'P1' ? 'animate-pulse' : ''}`} style={{ backgroundColor: SEV_COLORS[i.severity] ?? '#4B5A7A' }} />
+        <div className="flex items-center gap-1">
+          <span className={`block w-2 h-2 rounded-full ${i.priority === 'P1' ? 'animate-pulse' : ''}`} style={{ backgroundColor: SEV_COLORS[i.severity] ?? '#4B5A7A' }} />
+          {i.min_reasoning_confidence !== null && i.min_reasoning_confidence < 70 && (
+            <span
+              className="block w-1.5 h-1.5 rounded-full bg-[#E05252]"
+              title={`Low reasoning confidence (${i.min_reasoning_confidence}%) — one or more steps below 70%`}
+            />
+          )}
+        </div>
       </td>
       <td className="p-2">
         {i.cluster ? (

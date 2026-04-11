@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { after } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createIncident, analyseIncident, classifyMessage, extractKeywords } from '@/lib/incidents'
+import type { ClassifyResult } from '@/lib/incidents'
 import { getGroupByChatId } from '@/lib/monitored-groups'
 import { sendLarkMessage } from '@/lib/lark'
 
@@ -227,15 +228,28 @@ async function processGroupMessage(payload: {
       return
     }
 
-    // 7. Classify as potential new incident
-    const classification = await classifyMessage(payload.content, 'lark_group', group.context ?? undefined)
+    // 7. Classify as potential new incident.
+    //    Classification now runs EXACTLY ONCE per message (Spec Critical
+    //    Constraint #4): classifyMessage does matcher + 5-step LLM; the
+    //    result flows through createIncident (for the merge path) and
+    //    analyseIncident (so it does not re-classify).
+    const classification: ClassifyResult = await classifyMessage(
+      payload.content,
+      'lark_group',
+      group.context ?? undefined,
+      {
+        cluster: group.cluster,
+        lark_root_id: payload.root_id ?? null,
+        sender_open_id: payload.sender_open_id,
+      }
+    )
 
     if (!classification.is_incident) {
       await supabaseAdmin.from('lark_group_messages').update({ processed: true }).eq('message_id', payload.message_id)
       return
     }
 
-    // 8. Create new incident
+    // 8. Create new incident (or merge into target when matcher said so)
     const incident = await createIncident({
       source: 'lark_scan',
       source_message_id: payload.message_id,
@@ -251,10 +265,22 @@ async function processGroupMessage(payload: {
       raw_content: payload.content,
       sender_name: payload.sender_name,
       sender_open_id: payload.sender_open_id,
-    })
+      category: classification.category,
+      assigned_to: classification.assigned_to,
+      lark_root_id: payload.root_id ?? null,
+    }, classification.match_result)
 
     if (incident) {
-      await analyseIncident(incident.id)
+      // Only run the analyse pipeline on truly new incidents.
+      // When the matcher merged into an existing target, createIncident
+      // returned the target row — its original reasoning trace stands
+      // and we don't want to re-classify or rebuild the proposal.
+      const wasMerged = classification.match_result.decision === 'merge' &&
+        classification.match_result.target_id === incident.id
+
+      if (!wasMerged) {
+        await analyseIncident(incident.id, classification)
+      }
 
       // P1 — DM Lee immediately
       if (classification.priority === 'P1' && LEE_OPEN_ID) {
@@ -276,7 +302,16 @@ async function processDirectMessage(payload: {
   message_id: string; chat_id: string; content: string; sender_open_id: string
 }) {
   try {
-    const classification = await classifyMessage(payload.content, 'lark_webhook')
+    const classification: ClassifyResult = await classifyMessage(
+      payload.content,
+      'lark_webhook',
+      undefined,
+      {
+        cluster: null,
+        lark_root_id: null,
+        sender_open_id: payload.sender_open_id,
+      }
+    )
     if (!classification.is_incident) return
 
     const incident = await createIncident({
@@ -290,9 +325,16 @@ async function processDirectMessage(payload: {
       title: classification.title,
       raw_content: payload.content,
       sender_open_id: payload.sender_open_id,
-    })
+      category: classification.category,
+      assigned_to: classification.assigned_to,
+      lark_root_id: null,
+    }, classification.match_result)
 
-    if (incident) await analyseIncident(incident.id)
+    if (incident) {
+      const wasMerged = classification.match_result.decision === 'merge' &&
+        classification.match_result.target_id === incident.id
+      if (!wasMerged) await analyseIncident(incident.id, classification)
+    }
   } catch (error) {
     console.error('[lark:dm]', error instanceof Error ? error.message : 'Unknown')
   }

@@ -183,6 +183,38 @@ export async function regenerateProposal(incidentId: string): Promise<ProposalRe
 }
 
 /**
+ * Append reasoning-step feedback tags to the latest revision of an
+ * incident. Separate from `submitFeedback` — that one writes to
+ * `feedback_tags` (proposal-level); this one writes to
+ * `reasoning_feedback_tags` (which step the AI got wrong).
+ */
+export async function submitReasoningFeedback(
+  incidentId: string,
+  tags: string[]
+): Promise<void> {
+  const { data: active, error: selectErr } = await supabaseAdmin
+    .from('proposal_revisions')
+    .select('id, reasoning_feedback_tags')
+    .eq('incident_id', incidentId)
+    .order('version_number', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (selectErr) throw new Error(selectErr.message)
+  if (!active) throw new Error('No revision found for incident')
+
+  const existing = (active.reasoning_feedback_tags as string[] | null) ?? []
+  const merged = Array.from(new Set([...existing, ...tags]))
+
+  const { error } = await supabaseAdmin
+    .from('proposal_revisions')
+    .update({ reasoning_feedback_tags: merged })
+    .eq('id', active.id)
+
+  if (error) throw new Error(error.message)
+}
+
+/**
  * Finalize the chain on approve/discard/send.
  */
 export async function finalizeRevisionChain(
