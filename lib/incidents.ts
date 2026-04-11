@@ -72,31 +72,43 @@ export async function classifyMessage(
   content: string,
   source: string,
   groupContext?: string,
-  context?: ClassifyContext
+  context?: ClassifyContext,
+  preComputedMatchResult?: MatchResult
 ): Promise<ClassifyResult> {
   // Short-reply early exit — skip both matcher and LLM
   if (content.trim().length < 15) {
     return buildEmptyClassifyResult()
   }
 
-  // STEP 1: deterministic matcher (never throws — returns 'new' on failure)
+  // STEP 1: deterministic matcher (never throws — returns 'new' on failure).
+  //
+  // Callers can pre-compute a MatchResult and pass it in to bypass the
+  // signal cascade entirely. This is used by the retrace-incident backfill
+  // script: re-classifying an incident that's already in the DB would
+  // otherwise match itself via ticket_id / unit_cluster and short-circuit
+  // as a merge. Backfill callers pass a synthetic { decision: 'new' }
+  // result so the LLM runs normally.
   let matchResult: MatchResult
-  try {
-    const { findMatchingIncident } = await import('./matching/incident-matcher')
-    matchResult = await findMatchingIncident({
-      cluster: context?.cluster ?? null,
-      raw_content: content,
-      lark_root_id: context?.lark_root_id ?? null,
-      sender_open_id: context?.sender_open_id ?? null,
-    })
-  } catch (error) {
-    console.error('[incidents:classify:matcher]', error instanceof Error ? error.message : 'Unknown')
-    matchResult = {
-      decision: 'new',
-      signal: 'none',
-      confidence: 90,
-      reasoning: 'Matcher threw; defaulting to new incident.',
-      decision_detail: { matcher_error: true },
+  if (preComputedMatchResult) {
+    matchResult = preComputedMatchResult
+  } else {
+    try {
+      const { findMatchingIncident } = await import('./matching/incident-matcher')
+      matchResult = await findMatchingIncident({
+        cluster: context?.cluster ?? null,
+        raw_content: content,
+        lark_root_id: context?.lark_root_id ?? null,
+        sender_open_id: context?.sender_open_id ?? null,
+      })
+    } catch (error) {
+      console.error('[incidents:classify:matcher]', error instanceof Error ? error.message : 'Unknown')
+      matchResult = {
+        decision: 'new',
+        signal: 'none',
+        confidence: 90,
+        reasoning: 'Matcher threw; defaulting to new incident.',
+        decision_detail: { matcher_error: true },
+      }
     }
   }
 
