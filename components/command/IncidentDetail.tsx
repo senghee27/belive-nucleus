@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
-import { RefreshCw, Copy, CheckCircle, ArrowUp, Archive, Send, X, ChevronDown, ChevronUp, FlaskConical } from 'lucide-react'
+import { RefreshCw, Copy, CheckCircle, ArrowUp, Archive, X, ChevronDown, ChevronUp, FlaskConical } from 'lucide-react'
 import { ProposalRevisionPanel } from './ProposalRevisionPanel'
 import { ReasoningPanel } from './ReasoningPanel'
 import { formatDistanceToNow } from 'date-fns'
@@ -57,19 +57,19 @@ export function IncidentDetail({ incident, onDecide, onResolve, loading }: Props
     finally { setSummaryLoading(false) }
   }
 
-  async function handleSend(useProposed: boolean) {
+  async function handleSend(useProposed: boolean, mode: 'thread' | 'message') {
     setSending(true)
     try {
       // If proposal was edited, send the edited version instead of use_proposed
       const isEdited = proposal !== (incident.ai_proposal ?? '')
       const body = useProposed
-        ? (isEdited ? { content: proposal } : { use_proposed: true })
-        : { content: replyText }
+        ? (isEdited ? { content: proposal, mode } : { use_proposed: true, mode })
+        : { content: replyText, mode }
       const d = await fetch(`/api/incidents/${incident.id}/reply`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       }).then(r => r.json())
       if (d.ok) {
-        toast.success(d.thread_reply ? '✓ Sent in thread as Lee' : '✓ Sent to group as Lee')
+        toast.success(d.mode === 'thread' ? '✓ Sent in thread as Lee' : '✓ Sent to group as Lee')
         setSentCount(prev => prev + 1)
         setReplyText('')
         if (useProposed) onDecide(incident.id, isEdited ? 'edited' : 'approved')
@@ -222,51 +222,14 @@ export function IncidentDetail({ incident, onDecide, onResolve, loading }: Props
             />
           )}
 
-          {/* Send as Lee */}
+          {/* Send as Lee — explicit mode buttons (Lee decides thread vs message) */}
           <div>
             <div className="flex items-center justify-between mb-1">
               <span className="text-[9px] text-[#4B5A7A] uppercase tracking-wider">Send as Lee</span>
             </div>
 
-            {/* Send target indicator — persistent, impossible to miss.
-                Green = threaded reply (normal / safer), amber = new top-level
-                message (riskier — Lee should notice). Prefer lark_root_id
-                (real thread root) over source_message_id (original
-                triggering message that becomes a new thread root). */}
-            {(() => {
-              const threadRootId = incident.lark_root_id ?? incident.source_message_id ?? null
-              const groupLabel = incident.group_name ?? incident.cluster ?? 'group'
-              const isThreadReply = Boolean(threadRootId)
-              return (
-                <div
-                  className="mb-2 flex items-center gap-2 rounded-md border px-2.5 py-1.5"
-                  style={{
-                    borderColor: isThreadReply ? 'rgba(75,242,162,0.25)' : 'rgba(232,168,56,0.25)',
-                    backgroundColor: isThreadReply ? 'rgba(75,242,162,0.05)' : 'rgba(232,168,56,0.05)',
-                  }}
-                  title={isThreadReply
-                    ? `Will reply in thread using root_id ${threadRootId?.slice(0, 12)}…`
-                    : 'Will post as a new top-level message to the group'}
-                >
-                  <span
-                    className="text-[11px]"
-                    style={{ color: isThreadReply ? '#4BF2A2' : '#E8A838' }}
-                  >
-                    {isThreadReply ? '↳' : '→'}
-                  </span>
-                  <span
-                    className="text-[9px] uppercase tracking-wider font-medium"
-                    style={{ color: isThreadReply ? '#4BF2A2' : '#E8A838' }}
-                  >
-                    {isThreadReply ? 'Reply in thread' : 'New message'}
-                  </span>
-                  <span className="text-[9px] text-[#4B5A7A] truncate">· {groupLabel}</span>
-                </div>
-              )
-            })()}
-
             <textarea value={replyText} onChange={e => setReplyText(e.target.value)}
-              placeholder="Type additional instruction..."
+              placeholder="Type additional instruction, or leave empty to send the proposal..."
               className="w-full bg-[#080E1C] border border-[#1A2035] rounded-lg p-2 text-[11px] text-[#E8EEF8] resize-none focus:outline-none focus:border-[#F2784B]/50 placeholder:text-[#2A3550]" rows={3} maxLength={500} />
             <div className="flex items-center justify-between mt-1">
               <span className="text-[8px] text-[#2A3550]">{replyText.length}/500</span>
@@ -275,23 +238,57 @@ export function IncidentDetail({ incident, onDecide, onResolve, loading }: Props
             {sentCount > 0 && (
               <p className="text-[10px] text-[#4BF2A2] mt-1">✓ Sent {sentCount} message{sentCount > 1 ? 's' : ''}</p>
             )}
-            <div className="flex gap-2 mt-2">
-              {incident.ai_proposal && (
-                <button onClick={() => handleSend(true)} disabled={sending}
-                  className="flex-1 h-8 rounded-lg bg-[#4BF2A2]/10 text-[#4BF2A2] text-[10px] font-medium hover:bg-[#4BF2A2]/20 disabled:opacity-50 flex items-center justify-center gap-1">
-                  <CheckCircle size={11} /> {sending ? '...' : (proposal !== (incident.ai_proposal ?? '') ? 'Send Edited' : 'Approve & Send')}
-                </button>
-              )}
-              <button onClick={() => handleSend(false)} disabled={sending || !replyText.trim()}
-                className="flex-1 h-8 rounded-lg bg-[#F2784B]/10 text-[#F2784B] text-[10px] font-medium hover:bg-[#F2784B]/20 disabled:opacity-30 flex items-center justify-center gap-1">
-                <Send size={11} /> {sending ? '...' : 'Send Custom'}
-              </button>
-              <button onClick={handleTestSend}
-                title="Send to Nucleus Testing Group — safe for testing"
-                className="h-8 px-3 rounded-lg border border-[#2E4070] text-[#4B5A7A] text-[10px] hover:border-[#9B6DFF] hover:text-[#9B6DFF] transition-colors flex items-center gap-1">
-                <FlaskConical size={11} /> Test
-              </button>
-            </div>
+
+            {/* Explicit mode buttons — Lee picks how the message is sent.
+                - "Reply in Thread" uses Lark's POST /im/v1/messages/{id}/reply
+                  and nests under the incident's anchor message. Muted when
+                  neither lark_root_id nor source_message_id is populated.
+                - "Send as Message" uses the regular create endpoint and
+                  posts top-level to the group chat.
+                Both buttons auto-select content: textarea wins if non-empty,
+                otherwise fall back to the proposal. */}
+            {(() => {
+              const threadRootId = incident.lark_root_id ?? incident.source_message_id ?? null
+              const canThread = Boolean(threadRootId)
+              const proposalText = (incident.ai_proposal ?? '').trim()
+              const typedText = replyText.trim()
+              const hasContent = Boolean(typedText || proposalText)
+              const usingProposal = !typedText && Boolean(proposalText)
+
+              return (
+                <div className="flex gap-2 mt-2">
+                  <button
+                    onClick={() => handleSend(usingProposal, 'thread')}
+                    disabled={sending || !hasContent || !canThread}
+                    title={canThread
+                      ? `Reply in thread under ${threadRootId!.slice(0, 14)}…${usingProposal ? ' (sends proposal)' : ' (sends custom text)'}`
+                      : 'No thread anchor on this incident — use "Send as Message" instead'}
+                    className="flex-1 h-8 rounded-lg bg-[#4BF2A2]/10 text-[#4BF2A2] text-[10px] font-medium hover:bg-[#4BF2A2]/20 disabled:opacity-20 disabled:cursor-not-allowed flex items-center justify-center gap-1 border border-[#4BF2A2]/20"
+                  >
+                    <span className="text-[12px] leading-none">↳</span>
+                    {sending ? '...' : 'Reply in Thread'}
+                  </button>
+                  <button
+                    onClick={() => handleSend(usingProposal, 'message')}
+                    disabled={sending || !hasContent}
+                    title={usingProposal
+                      ? 'Send the proposal as a new top-level message to the group'
+                      : 'Send custom text as a new top-level message to the group'}
+                    className="flex-1 h-8 rounded-lg bg-[#E8A838]/10 text-[#E8A838] text-[10px] font-medium hover:bg-[#E8A838]/20 disabled:opacity-20 disabled:cursor-not-allowed flex items-center justify-center gap-1 border border-[#E8A838]/20"
+                  >
+                    <span className="text-[12px] leading-none">→</span>
+                    {sending ? '...' : 'Send as Message'}
+                  </button>
+                  <button
+                    onClick={handleTestSend}
+                    title="Send to Nucleus Testing Group — safe for testing"
+                    className="h-8 px-3 rounded-lg border border-[#2E4070] text-[#4B5A7A] text-[10px] hover:border-[#9B6DFF] hover:text-[#9B6DFF] transition-colors flex items-center gap-1"
+                  >
+                    <FlaskConical size={11} /> Test
+                  </button>
+                </div>
+              )
+            })()}
           </div>
 
           {/* Actions */}
