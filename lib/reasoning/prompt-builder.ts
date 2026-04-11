@@ -48,9 +48,10 @@ VOICE FIT RULES:
 - "lee" = requires Lee's personal voice (P1 incidents, owner relationships, sensitive people issues)
 - "delegate" = routine ops / maintenance / housekeeping that a PIC can handle on Lee's behalf
 
-You MUST return ONLY valid JSON with this exact shape — every step has its own confidence and one-sentence reasoning. DO NOT include the matching step (already done). DO include all 5 remaining steps:
+You MUST return ONLY valid JSON with this exact shape — every step has its own confidence and one-sentence reasoning. DO NOT include the matching step (already done). DO include all 5 remaining steps AND a top-level "situation_summary" field:
 
 {
+  "situation_summary": "Leaking incoming pipe at B-15-06 flooding corridor, tenant reports water pooling",
   "is_incident": {
     "decision": true,
     "confidence": 92,
@@ -84,7 +85,15 @@ You MUST return ONLY valid JSON with this exact shape — every step has its own
   }
 }
 
-Each reasoning MUST be one sentence (max ~20 words). Each confidence MUST be 0-100 integer.`
+Each reasoning MUST be one sentence (max ~20 words). Each confidence MUST be 0-100 integer.
+
+SITUATION SUMMARY rules (for the top-level "situation_summary" string — this renders on the war-room /clusters view):
+- One sentence, plain English, HARD LIMIT 140 characters
+- Describe WHAT is happening + WHERE (unit/location) + urgency hint
+- Do NOT include the owner name (the UI appends it)
+- Do NOT include ticket numbers
+- Do NOT start with "Incident:" or "Issue:" — get straight to the fact
+- Write in the operator's voice, not the tenant's`
 
   const user = `Source: ${source}\nMessage: ${message}`
 

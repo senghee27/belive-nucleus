@@ -43,6 +43,7 @@ export interface ClassifyResult {
   category: string
   assigned_to: string | null
   voice_fit: 'lee' | 'delegate'
+  situation_summary: string | null
   match_result: MatchResult
   reasoning_steps: ReasoningStepPayload[]
 }
@@ -128,6 +129,7 @@ export async function classifyMessage(
       category: 'other',
       assigned_to: null,
       voice_fit: 'delegate',
+      situation_summary: null,
       match_result: matchResult,
       reasoning_steps: [],
     }
@@ -229,6 +231,13 @@ export async function classifyMessage(
       },
     ]
 
+    // situation_summary — top-level string, hard-clamped to 140 chars
+    // to match the DB constraint and the war-room row budget.
+    const rawSummary = typeof (parsed as Record<string, unknown>).situation_summary === 'string'
+      ? ((parsed as Record<string, unknown>).situation_summary as string).trim()
+      : ''
+    const situationSummary = rawSummary ? rawSummary.slice(0, 140) : null
+
     return {
       agent: (classificationDetail.agent as string) ?? 'coo',
       problem_type: (classificationDetail.problem_type as string) ?? 'ops_maintenance',
@@ -239,6 +248,7 @@ export async function classifyMessage(
       category: (parsed.classification.decision as string) ?? 'other',
       assigned_to: routingDecision ?? null,
       voice_fit: voiceFit,
+      situation_summary: situationSummary,
       match_result: matchResult,
       reasoning_steps: reasoningSteps,
     }
@@ -262,6 +272,7 @@ function buildEmptyClassifyResult(): ClassifyResult {
     category: 'other',
     assigned_to: null,
     voice_fit: 'delegate',
+    situation_summary: null,
     match_result: {
       decision: 'new',
       signal: 'none',
@@ -284,6 +295,7 @@ function buildFallbackClassifyResult(content: string, matchResult: MatchResult):
     category: 'other',
     assigned_to: null,
     voice_fit: 'lee',
+    situation_summary: null,
     match_result: matchResult,
     reasoning_steps: [],
   }
@@ -371,6 +383,11 @@ export async function createIncident(
     category?: string
     assigned_to?: string | null
     lark_root_id?: string | null
+    // War-room fields — passed through from the webhook so the
+    // incident row carries everything needed for the /clusters view.
+    situation_summary?: string | null
+    is_classified?: boolean
+    raw_lark_text?: string | null
   },
   matchResult?: MatchResult
 ): Promise<Incident | null> {
@@ -451,6 +468,13 @@ export async function createIncident(
       category: data.category,
       assigned_to: data.assigned_to ?? null,
       lark_root_id: data.lark_root_id ?? null,
+      // War-room fields. situation_summary comes from classifyMessage's
+      // top-level JSON field; raw_lark_text mirrors raw_content at ingest
+      // so the unclassified fallback render always has source text; is_
+      // classified flips true once the LLM produced a structured result.
+      situation_summary: data.situation_summary ?? null,
+      is_classified: data.is_classified ?? false,
+      raw_lark_text: data.raw_lark_text ?? data.raw_content,
       escalation_due_at: new Date(Date.now() + hours * 3600000).toISOString(),
       thread_keywords: keywords,
     }
@@ -461,20 +485,23 @@ export async function createIncident(
       .select()
       .single()
 
-    // Stop-gap: if the reasoning-trace migration has not been applied to
-    // this environment yet, Postgres rejects the insert with
-    //   42703 - column "lark_root_id" (or "assigned_to") does not exist
-    // Strip the new fields and retry once so incoming webhooks keep working
-    // through the migration window. Remove this fallback once all
-    // environments are known to be on migration 20260411000000.
+    // Stop-gap: if a migration has not been applied to this environment
+    // yet, Postgres rejects the insert with
+    //   42703 - column "<name>" does not exist
+    // Strip the optional new fields and retry once so incoming webhooks
+    // keep working through the migration window. Remove this fallback
+    // once all environments are known to be on the latest migration.
     if (error && /column .* does not exist/i.test(error.message)) {
       const missingNewColumns =
-        /lark_root_id|assigned_to|min_reasoning_confidence|merge_count|merged_from_incident_id/i.test(error.message)
+        /lark_root_id|assigned_to|min_reasoning_confidence|merge_count|merged_from_incident_id|situation_summary|is_classified|raw_lark_text/i.test(error.message)
       if (missingNewColumns) {
-        console.warn('[incidents:create] pre-migration schema detected, retrying without reasoning-trace columns')
+        console.warn('[incidents:create] pre-migration schema detected, retrying without optional columns')
         const legacyPayload = { ...insertPayload }
         delete legacyPayload.lark_root_id
         delete legacyPayload.assigned_to
+        delete legacyPayload.situation_summary
+        delete legacyPayload.is_classified
+        delete legacyPayload.raw_lark_text
         const retry = await supabaseAdmin
           .from('incidents')
           .insert(legacyPayload)

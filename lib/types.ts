@@ -55,6 +55,10 @@ export type Incident = {
   min_reasoning_confidence: number | null
   merged_from_incident_id: string | null
   merge_count: number
+  // Cluster Health War Room (migration 20260411130000)
+  situation_summary: string | null  // ≤140 char one-liner for war-room rows
+  is_classified: boolean            // false = amber "[unclassified]" fallback
+  raw_lark_text: string | null      // preserved raw Lark text for fallback render
 }
 
 export type ReasoningStepName =
@@ -182,6 +186,68 @@ export type NucleusSession = {
   session_expires_at: number
   issued_at: number
 }
+
+// War Room category grouping — maps raw ISSUE_CATEGORIES keys into
+// the 5 buckets the /clusters war-room view renders per cluster.
+// Any category not listed falls through into 'incidents'.
+export type WarRoomCategoryGroup =
+  | 'maintenance'
+  | 'cleaning'
+  | 'move_in'
+  | 'move_out'
+  | 'incidents'
+
+export const WAR_ROOM_CATEGORY_MAP: Record<string, WarRoomCategoryGroup> = {
+  air_con: 'maintenance',
+  plumbing: 'maintenance',
+  electrical: 'maintenance',
+  lift: 'maintenance',
+  door_lock: 'maintenance',
+  water_heater: 'maintenance',
+  general_repair: 'maintenance',
+  structural: 'maintenance',
+  cleaning: 'cleaning',
+  hygiene: 'cleaning',
+  pest: 'cleaning',
+  move_in: 'move_in',
+  onboarding: 'move_in',
+  move_out: 'move_out',
+  access_card: 'incidents',
+  safety: 'incidents',
+  eviction: 'incidents',
+  payment: 'incidents',
+  complaint: 'incidents',
+  other: 'incidents',
+}
+
+export function categoryGroup(category: string | null | undefined): WarRoomCategoryGroup {
+  if (!category) return 'incidents'
+  return WAR_ROOM_CATEGORY_MAP[category] ?? 'incidents'
+}
+
+export const WAR_ROOM_GROUP_LABEL: Record<WarRoomCategoryGroup, string> = {
+  maintenance: 'Maintenance',
+  cleaning: 'Cleaning',
+  move_in: 'Move In',
+  move_out: 'Move Out',
+  incidents: 'Incidents',
+}
+
+export const WAR_ROOM_GROUP_LIMIT: Record<WarRoomCategoryGroup, number> = {
+  maintenance: 10,
+  cleaning: 3,
+  move_in: 3,
+  move_out: 3,
+  incidents: 3,
+}
+
+export const WAR_ROOM_GROUP_ORDER: readonly WarRoomCategoryGroup[] = [
+  'maintenance',
+  'cleaning',
+  'move_in',
+  'move_out',
+  'incidents',
+] as const
 
 export const ISSUE_CATEGORIES: Record<string, { label: string; icon: string; color: string }> = {
   air_con: { label: 'Air Con', icon: '🌬️', color: '#4BB8F2' },

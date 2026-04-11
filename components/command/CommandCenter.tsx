@@ -8,6 +8,7 @@ import { Search, LayoutList, LayoutGrid, X, Clock, AlertCircle, Timer, RefreshCw
 import { formatDistanceToNow } from 'date-fns'
 import type { Incident, IncidentStats } from '@/lib/types'
 import { ISSUE_CATEGORIES } from '@/lib/types'
+import { rankClusterCode, sortClusterCodesNatural } from '@/lib/clusters/sort'
 
 const SORT_OPTIONS = [
   { key: 'created_at_desc', label: 'Newest', icon: Clock },
@@ -117,11 +118,10 @@ export function CommandCenter({ initialIncidents, initialStats }: { initialIncid
     }
     const sevOrd: Record<string, number> = { RED: 0, YELLOW: 1, GREEN: 2 }
     const priOrd: Record<string, number> = { P1: 0, P2: 1, P3: 2 }
-    const clusterOrd = (c: string | null) => {
-      if (!c) return 99
-      const n = parseInt(c.replace('C', ''))
-      return isNaN(n) ? 98 : n
-    }
+    // Shared rank function — see lib/clusters/sort.ts. rankClusterCode
+    // returns POSITIVE_INFINITY for null/unparseable, which naturally
+    // sinks them to the bottom on ascending sort.
+    const clusterOrd = rankClusterCode
     const unresolvedStatuses = ['new', 'analysed', 'awaiting_lee', 'acting']
 
     list = [...list].sort((a, b) => {
@@ -196,7 +196,10 @@ export function CommandCenter({ initialIncidents, initialStats }: { initialIncid
     { label: 'Resolved', count: stats.by_status?.resolved ?? 0, color: '#4BF2A2' },
   ]
 
-  const clusters = ['C1','C2','C3','C4','C5','C6','C7','C8','C9','C10','C11']
+  // Cluster filter pills — routed through sortClusterCodesNatural even
+  // though this array is static, so there's one less place to rely on
+  // source-order discipline if the list ever becomes dynamic.
+  const clusters = sortClusterCodesNatural(['C1','C2','C3','C4','C5','C6','C7','C8','C9','C10','C11'])
   const topCategories = ['air_con','plumbing','electrical','move_in','move_out','cleaning','general_repair','access_card','safety']
 
   return (

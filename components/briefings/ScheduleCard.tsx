@@ -4,13 +4,14 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Play, RotateCw, History, Eye, Check, X, AlertCircle, SkipForward, Loader2 } from 'lucide-react'
 import type { BriefingScheduleConfig, BriefingCronRun } from '@/lib/types'
+import { sortClusterCodesNatural } from '@/lib/clusters/sort'
 
 const CLUSTER_NAMES: Record<string, string> = {
   C1: 'JB', C2: 'Penang', C3: 'Nilai', C4: 'Ampang', C5: 'Ara Damansara',
   C6: 'PJ Subang', C7: 'Seri Kembangan', C8: 'Sentul', C9: 'Cheras',
   C10: 'Mont Kiara', C11: 'M Vertica',
 }
-const ALL_CLUSTERS = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10', 'C11']
+const ALL_CLUSTERS = sortClusterCodesNatural(['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10', 'C11'])
 
 const STATUS_ICON: Record<string, { icon: typeof Check; color: string; label: string }> = {
   success: { icon: Check, color: '#4BF2A2', label: 'Last run OK' },

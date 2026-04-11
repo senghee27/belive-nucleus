@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { formatDistanceToNow } from 'date-fns'
 import Link from 'next/link'
+import { sortClusterCodesNatural } from '@/lib/clusters/sort'
 
 type LogEvent = {
   id: string; created_at: string; event_type: string; event_subtype: string | null
@@ -120,7 +121,7 @@ export function WatchdogFeed() {
           </button>
         ))}
         <span className="w-px h-5 bg-[#1A2035] self-center mx-1" />
-        {['C1','C2','C3','C4','C5','C6','C7','C8','C9','C10','C11'].map(c => (
+        {sortClusterCodesNatural(['C1','C2','C3','C4','C5','C6','C7','C8','C9','C10','C11']).map(c => (
           <button key={c} onClick={() => setClusterFilter(clusterFilter === c ? null : c)}
             className={`px-1.5 py-0.5 rounded text-[9px] font-[family-name:var(--font-jetbrains-mono)] font-bold ${clusterFilter === c ? '' : 'text-[#4B5A7A]'}`}
             style={clusterFilter === c ? { color: CLUSTER_COLORS[c], backgroundColor: CLUSTER_COLORS[c] + '20' } : {}}>

@@ -1,9 +1,11 @@
-import { getAllClusterHealth } from '@/lib/cluster-health'
-import { ClusterHealthWall } from '@/components/clusters/ClusterHealthWall'
+import { WarRoomWall } from '@/components/clusters/war-room/WarRoomWall'
 
 export const dynamic = 'force-dynamic'
 
-export default async function ClustersPage() {
-  const clusters = await getAllClusterHealth()
-  return <ClusterHealthWall initialClusters={clusters} />
+export default function ClustersPage() {
+  return (
+    <div className="h-[calc(100vh-100px)] min-h-0">
+      <WarRoomWall />
+    </div>
+  )
 }

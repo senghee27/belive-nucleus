@@ -8,6 +8,7 @@ import { Send, Settings, Check, RotateCw, FileText, X } from 'lucide-react'
 import type { BriefingReport, BriefingReportStatus } from '@/lib/types'
 import { REPORT_TYPE_META } from '@/lib/types'
 import { AutoSendDrawer } from './AutoSendDrawer'
+import { sortClusterCodesNatural } from '@/lib/clusters/sort'
 
 const STATUS_PILLS: Record<string, { bg: string; text: string; label: string }> = {
   draft: { bg: 'bg-[#E8A838]/15', text: 'text-[#E8A838]', label: 'Draft' },
@@ -27,7 +28,7 @@ const TYPE_GROUPS = [
 ]
 
 const STATUS_FILTERS: BriefingReportStatus[] = ['draft', 'sent', 'failed', 'discarded']
-const CLUSTERS = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10', 'C11']
+const CLUSTERS = sortClusterCodesNatural(['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10', 'C11'])
 
 export function ReportFeed() {
   const router = useRouter()

@@ -88,7 +88,8 @@ export async function runMiddayScan(cluster: string, triggeredBy: 'cron' | 'manu
 }
 
 export async function runAllMiddayScans(): Promise<void> {
-  const clusters = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10', 'C11']
+  const { sortClusterCodesNatural } = await import('@/lib/clusters/sort')
+  const clusters = sortClusterCodesNatural(['C1','C2','C3','C4','C5','C6','C7','C8','C9','C10','C11'])
   for (const c of clusters) {
     await runMiddayScan(c)
   }

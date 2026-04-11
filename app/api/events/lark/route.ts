@@ -249,7 +249,11 @@ async function processGroupMessage(payload: {
       return
     }
 
-    // 8. Create new incident (or merge into target when matcher said so)
+    // 8. Create new incident (or merge into target when matcher said so).
+    //    War-room fields: is_classified=true when the LLM returned all 6
+    //    reasoning steps (i.e. a full successful classification), false
+    //    when we fell back. raw_lark_text preserves the tenant voice so
+    //    the /clusters amber fallback always has source text.
     const incident = await createIncident({
       source: 'lark_scan',
       source_message_id: payload.message_id,
@@ -268,6 +272,9 @@ async function processGroupMessage(payload: {
       category: classification.category,
       assigned_to: classification.assigned_to,
       lark_root_id: payload.root_id ?? null,
+      situation_summary: classification.situation_summary,
+      is_classified: classification.reasoning_steps.length === 6,
+      raw_lark_text: payload.content,
     }, classification.match_result)
 
     if (incident) {
@@ -328,6 +335,9 @@ async function processDirectMessage(payload: {
       category: classification.category,
       assigned_to: classification.assigned_to,
       lark_root_id: null,
+      situation_summary: classification.situation_summary,
+      is_classified: classification.reasoning_steps.length === 6,
+      raw_lark_text: payload.content,
     }, classification.match_result)
 
     if (incident) {

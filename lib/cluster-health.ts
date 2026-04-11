@@ -154,7 +154,8 @@ export async function computeClusterHealth(cluster: string): Promise<void> {
 }
 
 export async function computeAllClusters(): Promise<void> {
-  const clusters = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10', 'C11']
+  const { sortClusterCodesNatural } = await import('./clusters/sort')
+  const clusters = sortClusterCodesNatural(['C1','C2','C3','C4','C5','C6','C7','C8','C9','C10','C11'])
   await Promise.all(clusters.map(c => computeClusterHealth(c)))
 }
 
@@ -162,8 +163,11 @@ export async function getAllClusterHealth(): Promise<ClusterHealth[]> {
   const { data } = await supabaseAdmin
     .from('cluster_health_cache')
     .select('*')
+    // Postgres ordering alone would give C1 < C10 < C11 < C2 — natural
+    // sorting has to happen in-process.
     .order('cluster', { ascending: true })
-  return (data ?? []) as ClusterHealth[]
+  const { sortClustersNatural } = await import('./clusters/sort')
+  return sortClustersNatural((data ?? []) as ClusterHealth[], c => c.cluster)
 }
 
 export async function getClusterTicketDetails(cluster: string) {

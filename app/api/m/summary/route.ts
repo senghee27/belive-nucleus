@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { sortClustersNatural } from '@/lib/clusters/sort'
 
 export async function GET() {
   try {
@@ -7,9 +8,19 @@ export async function GET() {
       supabaseAdmin.from('incidents').select('*').eq('priority', 'P1').in('status', ['new', 'analysed', 'awaiting_lee', 'acting']).order('created_at', { ascending: false }).limit(5),
       supabaseAdmin.from('incidents').select('id', { count: 'exact', head: true }).in('status', ['awaiting_lee']),
       supabaseAdmin.from('incidents').select('id', { count: 'exact', head: true }).eq('status', 'resolved').gte('resolved_at', new Date(new Date().setHours(0, 0, 0, 0)).toISOString()),
-      supabaseAdmin.from('cluster_health_cache').select('cluster, health_status').order('cluster', { ascending: true }),
+      supabaseAdmin.from('cluster_health_cache').select('cluster, health_status'),
       supabaseAdmin.from('briefing_reports').select('id', { count: 'exact', head: true }).eq('status', 'draft'),
     ])
+
+    // Mobile PWA displays these pills — natural order so C10/C11 sit
+    // after C9 instead of between C1 and C2.
+    const clusterSummary = sortClustersNatural(
+      (clusters.data ?? []).map((c: Record<string, unknown>) => ({
+        cluster: c.cluster as string,
+        status: (c.health_status as string) ?? null,
+      })),
+      c => c.cluster,
+    )
 
     return NextResponse.json({
       ok: true,
@@ -17,7 +28,7 @@ export async function GET() {
       p1_count: (p1.data ?? []).length,
       awaiting_count: awaiting.count ?? 0,
       resolved_today: resolvedToday.count ?? 0,
-      cluster_summary: (clusters.data ?? []).map((c: Record<string, unknown>) => ({ cluster: c.cluster, status: c.health_status })),
+      cluster_summary: clusterSummary,
       draft_reports_count: drafts.count ?? 0,
     })
   } catch (error) {
