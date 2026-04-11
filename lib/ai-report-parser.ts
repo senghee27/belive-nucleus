@@ -169,8 +169,14 @@ export async function upsertTickets(tickets: ParsedTicket[], reportDate: Date): 
       let ai_situation_generated_at: string | null = null
       if (shouldRegenerate(priorRow, situationInput)) {
         const result = await generateSituationLine(situationInput)
-        ai_situation_line = result.line
-        ai_situation_generated_at = new Date().toISOString()
+        // Only persist if the generator actually produced a line —
+        // on rate-limit/failed responses we leave the prior value
+        // (or NULL for new tickets) so a later upsert or the
+        // backfill script can retry.
+        if (result.line !== null) {
+          ai_situation_line = result.line
+          ai_situation_generated_at = new Date().toISOString()
+        }
       }
 
       const payload: Record<string, unknown> = {

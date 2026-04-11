@@ -26,7 +26,14 @@ import './_env-preload'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { generateSituationLine, type SituationLineInput } from '@/lib/tickets/situation-line'
 
-const CONCURRENCY = 4 // Anthropic-friendly default; adjust if you hit rate limits
+// Anthropic limit is 50 RPM. 2 workers × ~1.5s/call = ~80 RPM peak,
+// but retry backoff + network jitter usually keeps us under. If you
+// still see 429s the generator now retries with exponential backoff
+// (30/60/120s), so a sustained run will slow to the rate limit but
+// complete without losing rows.
+const CONCURRENCY = 2
+// Supabase PostgREST default limit is 1000 — we paginate to exceed it.
+const PAGE_SIZE = 500
 
 async function main() {
   const dryRun = process.argv.includes('--dry-run')
@@ -38,19 +45,41 @@ async function main() {
   console.log(`\n🧹 Backfilling ai_situation_line${dryRun ? ' (dry run)' : ''}`)
   console.log(`   Concurrency: ${CONCURRENCY}  ·  Limit: ${limit}\n`)
 
-  const { data: rows, error } = await supabaseAdmin
-    .from('ai_report_tickets')
-    .select('id, ticket_id, issue_description, summary, unit_number, property, owner_name, owner_role, status, age_days')
-    .eq('status', 'open')
-    .is('ai_situation_line', null)
-    .limit(limit)
+  // Paginate because PostgREST caps a single response at 1000 rows —
+  // without range() or looping we'd silently miss the tail.
+  const list: Array<{
+    id: string
+    ticket_id: string
+    issue_description: string | null
+    summary: string | null
+    unit_number: string | null
+    property: string | null
+    owner_name: string | null
+    owner_role: string | null
+    status: string | null
+    age_days: number | null
+  }> = []
 
-  if (error) {
-    console.error('❌ select failed:', error.message)
-    process.exit(1)
+  let offset = 0
+  while (list.length < limit) {
+    const end = Math.min(offset + PAGE_SIZE - 1, offset + (limit - list.length) - 1)
+    const { data: page, error } = await supabaseAdmin
+      .from('ai_report_tickets')
+      .select('id, ticket_id, issue_description, summary, unit_number, property, owner_name, owner_role, status, age_days')
+      .eq('status', 'open')
+      .is('ai_situation_line', null)
+      .order('created_at', { ascending: false })
+      .range(offset, end)
+
+    if (error) {
+      console.error('❌ select failed:', error.message)
+      process.exit(1)
+    }
+    if (!page || page.length === 0) break
+    list.push(...(page as typeof list))
+    if (page.length < PAGE_SIZE) break
+    offset += PAGE_SIZE
   }
-
-  const list = rows ?? []
   if (list.length === 0) {
     console.log('✅ Nothing to backfill — every open ticket already has a situation line.')
     return
@@ -83,6 +112,16 @@ async function main() {
       }
       try {
         const result = await generateSituationLine(input)
+
+        // Three outcomes: real LLM, heuristic fallback (persist), or
+        // null (leave row alone so re-run targets it).
+        if (result.line === null) {
+          failed++
+          errors.push(`${row.ticket_id}: ${result.error}`)
+          done++
+          continue
+        }
+
         if (result.used_fallback) fallback++
         else generated++
 
@@ -101,10 +140,10 @@ async function main() {
         }
 
         done++
-        if (done % 10 === 0 || done === list.length) {
+        if (done % 25 === 0 || done === list.length) {
           console.log(`  ${done}/${list.length} processed (gen: ${generated}, fallback: ${fallback}, failed: ${failed})`)
         }
-        if (done <= 5) {
+        if (done <= 8) {
           console.log(`    ${row.ticket_id} → ${result.line}`)
         }
       } catch (err) {
