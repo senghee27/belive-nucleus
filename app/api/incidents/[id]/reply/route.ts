@@ -13,7 +13,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const { data: incident } = await supabaseAdmin
       .from('incidents')
-      .select('chat_id, cluster, ai_proposal, source_lark_message_id')
+      .select('chat_id, cluster, ai_proposal, source_message_id, lark_root_id')
       .eq('id', id)
       .single()
 
@@ -47,17 +47,25 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const safeChatId = getSafeChatId(incident.chat_id, 'chat_id')
 
-    // Build message payload — thread reply if root_id available
+    // Thread-reply root: prefer Lark's explicit root_id (set when this
+    // incident was born from a reply into an existing thread), else
+    // fall back to source_message_id (the triggering top-level message,
+    // which becomes the root of a new thread when Lee replies).
+    const threadRootId: string | null =
+      (incident.lark_root_id as string | null) ??
+      (incident.source_message_id as string | null) ??
+      null
+
+    // Build message payload — thread reply if we have a root anchor
     const payload: Record<string, unknown> = {
       receive_id: safeChatId,
       msg_type: 'text',
       content: JSON.stringify({ text: larkContent }),
     }
 
-    // Reply in thread if source message exists
-    if (incident.source_lark_message_id) {
+    if (threadRootId) {
       payload.reply_in_thread = true
-      payload.root_id = incident.source_lark_message_id
+      payload.root_id = threadRootId
     }
 
     const res = await fetch(
@@ -80,8 +88,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       is_lee: true,
       sender_name: 'Lee Seng Hee',
       metadata: {
-        sent_as_thread_reply: !!incident.source_lark_message_id,
-        root_id: incident.source_lark_message_id,
+        sent_as_thread_reply: !!threadRootId,
+        root_id: threadRootId,
         mentions: mentions.map(m => m.name),
         lark_message_id: resData.data?.message_id,
       },
@@ -106,7 +114,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       ok: true,
       sent,
       message_id: resData.data?.message_id,
-      thread_reply: !!incident.source_lark_message_id,
+      thread_reply: !!threadRootId,
       mentions: mentions.map(m => m.name),
     })
   } catch (error) {

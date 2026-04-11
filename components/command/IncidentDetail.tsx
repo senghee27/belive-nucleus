@@ -226,8 +226,45 @@ export function IncidentDetail({ incident, onDecide, onResolve, loading }: Props
           <div>
             <div className="flex items-center justify-between mb-1">
               <span className="text-[9px] text-[#4B5A7A] uppercase tracking-wider">Send as Lee</span>
-              {Boolean((incident as Record<string, unknown>).source_lark_message_id) && <span className="text-[8px] text-[#4BF2A2]">Reply in thread ✓</span>}
             </div>
+
+            {/* Send target indicator — persistent, impossible to miss.
+                Green = threaded reply (normal / safer), amber = new top-level
+                message (riskier — Lee should notice). Prefer lark_root_id
+                (real thread root) over source_message_id (original
+                triggering message that becomes a new thread root). */}
+            {(() => {
+              const threadRootId = incident.lark_root_id ?? incident.source_message_id ?? null
+              const groupLabel = incident.group_name ?? incident.cluster ?? 'group'
+              const isThreadReply = Boolean(threadRootId)
+              return (
+                <div
+                  className="mb-2 flex items-center gap-2 rounded-md border px-2.5 py-1.5"
+                  style={{
+                    borderColor: isThreadReply ? 'rgba(75,242,162,0.25)' : 'rgba(232,168,56,0.25)',
+                    backgroundColor: isThreadReply ? 'rgba(75,242,162,0.05)' : 'rgba(232,168,56,0.05)',
+                  }}
+                  title={isThreadReply
+                    ? `Will reply in thread using root_id ${threadRootId?.slice(0, 12)}…`
+                    : 'Will post as a new top-level message to the group'}
+                >
+                  <span
+                    className="text-[11px]"
+                    style={{ color: isThreadReply ? '#4BF2A2' : '#E8A838' }}
+                  >
+                    {isThreadReply ? '↳' : '→'}
+                  </span>
+                  <span
+                    className="text-[9px] uppercase tracking-wider font-medium"
+                    style={{ color: isThreadReply ? '#4BF2A2' : '#E8A838' }}
+                  >
+                    {isThreadReply ? 'Reply in thread' : 'New message'}
+                  </span>
+                  <span className="text-[9px] text-[#4B5A7A] truncate">· {groupLabel}</span>
+                </div>
+              )
+            })()}
+
             <textarea value={replyText} onChange={e => setReplyText(e.target.value)}
               placeholder="Type additional instruction..."
               className="w-full bg-[#080E1C] border border-[#1A2035] rounded-lg p-2 text-[11px] text-[#E8EEF8] resize-none focus:outline-none focus:border-[#F2784B]/50 placeholder:text-[#2A3550]" rows={3} maxLength={500} />

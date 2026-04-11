@@ -26,8 +26,13 @@ export function IncidentPage({ incident: initial, timeline: initialTimeline }: {
 
   const cat = ISSUE_CATEGORIES[(incident as Record<string, unknown>).category as string ?? 'other'] ?? ISSUE_CATEGORIES.other
   const status = STATUS_STYLES[incident.status] ?? STATUS_STYLES.new
-  const larkDeepLink = (incident as Record<string, unknown>).source_lark_message_id
-    ? `https://applink.larksuite.com/client/message/open?messageId=${(incident as Record<string, unknown>).source_lark_message_id}`
+  // Deep-link to the original Lark message: prefer lark_root_id (set when
+  // the incident was born from a reply in an existing thread), fall back to
+  // source_message_id (the triggering message). source_lark_message_id is
+  // an older column that is never populated — ignore it.
+  const threadRootId = incident.lark_root_id ?? incident.source_message_id ?? null
+  const larkDeepLink = threadRootId
+    ? `https://applink.larksuite.com/client/message/open?messageId=${threadRootId}`
     : null
 
   const handleDecide = useCallback(async (id: string, action: string, instruction?: string) => {
