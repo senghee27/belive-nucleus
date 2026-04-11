@@ -34,6 +34,95 @@ export function getInitials(name: string | null): string {
   return name.slice(0, 2).toUpperCase()
 }
 
+// ---------------------------------------------------------------------------
+// Owner name resolution — single source of truth for the "— owner" trailing
+// label across the app (war-room rows, mobile queue, command center, etc.).
+//
+// The historical bug: when Lark webhook staff resolution fails, the
+// fallback was `staff?.name ?? senderOpenId`, which writes raw open_ids
+// (cli_xxxxxxxxxxxxxxxxx, ou_abcdef123456) into incidents.sender_name.
+// Those then leak into every UI surface that reads sender_name.
+//
+// Fix: all owner rendering goes through sanitizeOwnerLabel (sync, client-
+// safe) or resolveOwnerName (async, server-side staff cache lookup).
+// Neither ever returns a raw open_id — failure mode is always "— unknown".
+// ---------------------------------------------------------------------------
+
+const OPEN_ID_PATTERN = /^(cli_|ou_|om_|oc_|on_)[A-Fa-f0-9]{6,}$/
+
+/**
+ * Pure check — does the string look like a Lark open_id rather than a
+ * human name? Used to defend UI components from polluted sender_name
+ * values in the DB.
+ */
+export function isRawOpenId(s: string | null | undefined): boolean {
+  if (!s) return false
+  return OPEN_ID_PATTERN.test(s.trim())
+}
+
+/**
+ * Synchronous owner-label fallback. Safe to call from client components
+ * — no DB lookups. Returns a clean first name if the input is a real
+ * name, "— unknown" if the input is null, empty, or a raw open_id.
+ *
+ * Use this as the LAST line of defense in any UI that renders
+ * sender_name or sender_open_id as a display label.
+ */
+export function sanitizeOwnerLabel(raw: string | null | undefined): string {
+  if (!raw) return '— unknown'
+  const trimmed = raw.trim()
+  if (!trimmed) return '— unknown'
+  if (isRawOpenId(trimmed)) return '— unknown'
+  // First word only — "Mohd Nor Safie" → "Mohd"
+  const first = trimmed.split(/\s+/)[0]
+  return first || '— unknown'
+}
+
+/**
+ * Server-side owner resolution. Tries the staff-directory cache + DB,
+ * falls back to sanitizing whatever sender_name was persisted. Never
+ * returns a raw open_id.
+ *
+ * Priority order:
+ *   1. assigned_to (structured routing PIC name, already clean)
+ *   2. staff_directory.first_name by open_id lookup
+ *   3. sanitizeOwnerLabel(sender_name) — strips raw open_ids
+ *   4. "— unknown"
+ *
+ * Pass an optional `staffIndex` when bulk-resolving many rows in one
+ * request (e.g. the war-room API). That avoids N parallel DB calls.
+ */
+export async function resolveOwnerName(input: {
+  openId?: string | null
+  senderName?: string | null
+  assignedTo?: string | null
+  staffIndex?: Map<string, StaffMember>
+}): Promise<string> {
+  // 1. Structured routing PIC — always clean, never a raw open_id
+  if (input.assignedTo && !isRawOpenId(input.assignedTo)) {
+    return input.assignedTo
+  }
+
+  // 2. Staff directory lookup
+  if (input.openId) {
+    const cached = input.staffIndex?.get(input.openId) ?? staffCache.get(input.openId)
+    if (cached) {
+      return cached.first_name || sanitizeOwnerLabel(cached.name)
+    }
+    // Fall through to async lookup only when no index was provided;
+    // bulk callers should pre-load staffIndex to avoid this path.
+    if (!input.staffIndex) {
+      const member = await resolveOpenId(input.openId)
+      if (member) {
+        return member.first_name || sanitizeOwnerLabel(member.name)
+      }
+    }
+  }
+
+  // 3. Whatever sender_name happens to contain — sanitized
+  return sanitizeOwnerLabel(input.senderName)
+}
+
 export async function resolveOpenId(openId: string): Promise<StaffMember | null> {
   if (!openId) return null
 

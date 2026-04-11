@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import type { Incident } from '@/lib/types'
+import { sanitizeOwnerLabel } from '@/lib/staff-directory'
 
 const SEV_DOT: Record<string, string> = { red: '#E05252', amber: '#E8A838', green: '#4BF2A2' }
 const CLUSTER_COLORS: Record<string, string> = { C1:'#F2784B',C2:'#9B6DFF',C3:'#4BB8F2',C4:'#4BF2A2',C5:'#E8A838',C6:'#F27BAD',C7:'#6DD5F2',C8:'#B46DF2',C9:'#F2C96D',C10:'#6DF2B4',C11:'#E05252' }
@@ -71,7 +72,7 @@ export default function UrgentPage() {
                   </div>
                   <p className="text-[15px] font-semibold text-[#E8EEF8] mb-1 leading-snug">{inc.title}</p>
                   <p className="text-[13px] text-[#8A9BB8] mb-3">
-                    {inc.sender_name ?? '—'} · {inc.status === 'awaiting_lee' ? '⚡ Awaiting Lee' : inc.status}
+                    {sanitizeOwnerLabel(inc.sender_name)} · {inc.status === 'awaiting_lee' ? '⚡ Awaiting Lee' : inc.status}
                   </p>
                   <button onClick={() => router.push(`/m/queue?focus=${inc.id}`)}
                     className="w-full h-11 bg-[#E05252] rounded-[10px] text-white text-[14px] font-semibold">

@@ -33,21 +33,10 @@ const PRIORITY_DOT: Record<string, string> = {
   P3: '#4B5A7A',
 }
 
-function firstName(name: string | null): string {
-  if (!name) return ''
-  const clean = name.trim()
-  if (!clean) return ''
-  return clean.split(/\s+/)[0]
-}
-
-function ownerLabel(row: WarRoomRow): string {
-  // assigned_to is the structured routing PIC name (already a first name
-  // like "Fariha"). Fall back to the sender's first name if routing
-  // didn't set one.
-  if (row.assigned_to) return row.assigned_to
-  const fromSender = firstName(row.sender_name)
-  return fromSender || '—'
-}
+// Owner label is now pre-resolved server-side by the war-room API
+// (see app/api/clusters/war-room/route.ts → ownerDisplayFor). The client
+// just reads owner_display and never touches sender_open_id / sender_name,
+// so raw open_ids from the pre-fix webhook can't leak into the UI.
 
 function ageLabel(createdAt: string): string {
   try {
@@ -73,7 +62,7 @@ interface SituationRowProps {
 export function SituationRow({ row, onClick }: SituationRowProps) {
   const isP1 = row.priority === 'P1'
   const dotColor = PRIORITY_DOT[row.priority] ?? SEV_DOT[row.severity] ?? '#4B5A7A'
-  const owner = ownerLabel(row)
+  const owner = row.owner_display || '— unknown'
   const age = ageLabel(row.created_at)
 
   // Spec §5: unclassified rows render raw tenant text in amber

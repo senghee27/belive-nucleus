@@ -4,9 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { CategoryHeader } from './CategoryHeader'
 import { SituationRow } from './SituationRow'
+import { DottedSlot } from './DottedSlot'
 import {
   WAR_ROOM_GROUP_ORDER,
   WAR_ROOM_GROUP_LABEL,
+  WAR_ROOM_GROUP_LIMIT,
 } from '@/lib/types'
 import type { WarRoomCluster, WarRoomCategoryBucket, WarRoomRow } from '@/app/api/clusters/war-room/route'
 
@@ -198,11 +200,23 @@ function WarRoomColumn({ cluster, isFlashing, registerRef, onRowClick }: WarRoom
         )}
       </div>
 
-      {/* Category sections — fixed order per spec §2 */}
+      {/* Category sections — fixed-band grid per spec §2.
+          Every category always renders WAR_ROOM_GROUP_LIMIT[group] slots.
+          Real rows fill from the top; unused slots render as DottedSlot
+          placeholders so Lee can scan row-by-row horizontally across
+          all clusters at predictable vertical positions. strict top-N
+          enforcement is handled server-side in the /api/clusters/war-room
+          bucketer — this client just trusts bucket.rows is already
+          capped to the band limit. */}
       <div className="flex-1 overflow-y-auto px-1">
         {WAR_ROOM_GROUP_ORDER.map(group => {
           const bucket: WarRoomCategoryBucket = cluster[group]
           const label = WAR_ROOM_GROUP_LABEL[group]
+          const bandSize = WAR_ROOM_GROUP_LIMIT[group]
+          // Defensive: even if the API ever returns more than the
+          // band limit, clamp here so the grid never overflows.
+          const visibleRows = bucket.rows.slice(0, bandSize)
+          const emptySlots = Math.max(0, bandSize - visibleRows.length)
           return (
             <section key={group} className="mb-0.5">
               <CategoryHeader
@@ -211,18 +225,16 @@ function WarRoomColumn({ cluster, isFlashing, registerRef, onRowClick }: WarRoom
                 overdue={bucket.overdue}
               />
               <div className="flex flex-col">
-                {bucket.rows.length === 0 && (
-                  <div className="py-1.5 px-2 text-[10px] text-[#2A3550] italic">
-                    No open items.
-                  </div>
-                )}
-                {bucket.rows.map(row => (
+                {visibleRows.map(row => (
                   <SituationRow key={row.id} row={row} onClick={onRowClick} />
                 ))}
+                {Array.from({ length: emptySlots }).map((_, idx) => (
+                  <DottedSlot key={`empty-${group}-${idx}`} />
+                ))}
               </div>
-              {bucket.total > bucket.rows.length && (
+              {bucket.total > visibleRows.length && (
                 <div className="px-2 py-1 text-[9px] text-[#4B5A7A] hover:text-[#F2784B] cursor-pointer transition-colors">
-                  +{bucket.total - bucket.rows.length} more →
+                  +{bucket.total - visibleRows.length} more →
                 </div>
               )}
             </section>

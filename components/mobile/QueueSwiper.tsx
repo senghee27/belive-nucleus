@@ -6,6 +6,7 @@ import { useDrag } from '@use-gesture/react'
 import { toast } from 'sonner'
 import { BottomSheet } from './BottomSheet'
 import type { Incident } from '@/lib/types'
+import { sanitizeOwnerLabel } from '@/lib/staff-directory'
 
 const SWIPE_THRESHOLD = 120
 const ROTATION_FACTOR = 0.1
@@ -156,7 +157,7 @@ export function QueueSwiper({ incidents: initialIncidents }: { incidents: Incide
           {/* Title */}
           <p className="text-[17px] font-semibold text-[#E8EEF8] leading-snug mb-1">{inc.title}</p>
           <p className="text-[13px] text-[#8A9BB8] mb-3">
-            {inc.sender_name ?? '—'} · {ageDays}d
+            {sanitizeOwnerLabel(inc.sender_name)} · {ageDays}d
             {ageDays > 30 && <span className="text-[#E05252]"> · SLA breached</span>}
           </p>
 

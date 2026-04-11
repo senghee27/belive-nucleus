@@ -44,6 +44,16 @@ Every row is a 2-line card, always fully rendered (no expand-on-click).
 
 ---
 
+## 3.5 Fixed-Band Grid (critical)
+
+Every category occupies a **fixed vertical band across all 11 columns** so the commander's eye sweeps horizontally without bouncing. Maintenance is always rows 1–10, Cleaning always 11–13, Move In always 14–16, Move Out always 17–19, Incidents always 20–22 — *regardless* of how many actual tickets each cluster has in that category.
+
+**Why:** without this, C1's Maintenance header sits at Y=120 and C3's Maintenance header (which has fewer rows above it) sits at Y=80, forcing diagonal scanning. Diagonal scanning kills the war-room utility. Fixed bands turn the layout into a true matrix where one horizontal sweep reveals the entire fleet's state for one category.
+
+**Empty slots:** unused row slots in a band render as ultra-faint dotted placeholders (`#1a1a1f` background, 1px dashed `#1f1f23` border, 32px tall, no text). The `0` count in the section header already communicates "empty" — placeholders only hold the geometry. Never collapse, never show "No open items" text floating in space.
+
+**Strict top-N enforcement:** if a section's cap is 3, exactly 3 rows render even if vertical space allows more. The `+N more →` link carries the rest. The bug in the current screenshot where C1 Incidents shows 4 rows because the column is taller is exactly what fixed bands eliminate.
+
 ## 4. P1 Row Tinting
 
 Rows where severity = P1 receive a subtle coral background tint (`rgba(255, 90, 78, 0.06)`) and a 2px coral left-border. This makes catastrophic rows pop at scan distance without drowning the column in color.
@@ -68,6 +78,14 @@ Each category header shows `CategoryName` left, `{total} · {overdue} ovr` right
 Each section ends with `+N more →` drilling to the per-cluster category view.
 
 ---
+
+## 6.5 Owner Name Resolution Fix (system-wide)
+
+The current war-room screenshot exposes a bug: owner fields are leaking raw open_ids (`cli_a95beb5592f8ded0`, `ou_c78ef9279e51a094beae47486eabc50b`) when `staff_directory` resolution fails. This makes the situation report unreadable — the commander sees a wall of hex strings instead of names.
+
+**Fix:** the existing `resolveOwnerName(open_id)` util must, on resolution failure, return the dim string `— unknown` instead of the raw open_id. Apply system-wide everywhere `resolveOwnerName` is called: war-room rows, Command Center, Watchdog feed, Briefings, Mobile PWA, Reasoning Trace owner attribution. No more raw IDs reaching the UI under any code path.
+
+This is a one-line fix in the resolver but a system-wide bug, and it ships in the same PR as the war-room redesign because the war-room is where it's most visible.
 
 ## 7. System-Wide Cluster Ordering
 
@@ -122,4 +140,4 @@ Still over a strict 900px budget, but the gap is now manageable. Real-world fit 
 
 ## 11. Claude Code Prompt
 
-> Build the Cluster Health war-room view per `docs/features/NUCLEUS-CLUSTER-HEALTH-WAR-ROOM-SPEC.md`: horizontal-scroll 11-column layout, 2-line situation-report rows with always-visible AI summary + trailing owner, P1 coral tinting, `[unclassified]` amber fallback showing raw Lark text, overdue pills with explicit duration (`2h OVR`, `3d OVR`), category headers with `total · N ovr` diagnostics. Add shared `sortClustersNatural()` util and apply across Command Center, Briefings, Watchdog, Mobile PWA, and Learning Engine. Add `ai_summary`, `is_classified`, `raw_lark_text` fields to the incidents table.
+> Build the Cluster Health war-room view per `docs/features/NUCLEUS-CLUSTER-HEALTH-WAR-ROOM-SPEC.md`: horizontal-scroll 11-column layout with **fixed-band grid** (Maintenance always rows 1–10, Cleaning/MoveIn/MoveOut/Incidents always 3 rows each, empty slots render as dotted placeholders, strict top-N enforcement so no section ever overflows its band). 2-line situation-report rows with always-visible AI summary + trailing owner, P1 coral tinting, `[unclassified]` amber fallback showing raw Lark text, overdue pills with explicit duration (`2h OVR`, `3d OVR`), category headers with `total · N ovr` diagnostics. **Fix the owner resolution bug system-wide: `resolveOwnerName()` must return `— unknown` on failure, never raw `cli_xxx` or `ou_xxx` open_ids.** Add shared `sortClustersNatural()` util and apply across Command Center, Briefings, Watchdog, Mobile PWA, and Learning Engine. Add `ai_summary`, `is_classified`, `raw_lark_text` fields to the incidents table.

@@ -378,7 +378,7 @@ export async function createIncident(
     severity: string
     title: string
     raw_content: string
-    sender_name?: string
+    sender_name?: string | null
     sender_open_id?: string
     category?: string
     assigned_to?: string | null

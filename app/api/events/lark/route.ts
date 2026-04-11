@@ -89,10 +89,14 @@ async function processLarkWebhook(body: Record<string, unknown>) {
     const rootId = (message.root_id as string) ?? null
 
     if (chatType === 'group') {
-      // Resolve sender name from staff directory
+      // Resolve sender name from staff directory.
+      // On failure we store NULL on the incident rather than the raw
+      // open_id — raw open_ids (cli_xxx / ou_xxx) used to leak into
+      // every UI surface that reads sender_name. Display layers now
+      // fall back to "— unknown" via sanitizeOwnerLabel.
       const { resolveOpenId } = await import('@/lib/staff-directory')
       const staff = await resolveOpenId(senderOpenId)
-      const resolvedName = staff?.name ?? senderOpenId
+      const resolvedName = staff?.name ?? null
 
       await processGroupMessage({
         message_id: messageId,
@@ -120,7 +124,7 @@ async function processLarkWebhook(body: Record<string, unknown>) {
 
 async function processGroupMessage(payload: {
   message_id: string; chat_id: string; content: string
-  sender_open_id: string; sender_name: string; message_time: string
+  sender_open_id: string; sender_name: string | null; message_time: string
   parent_id?: string | null; root_id?: string | null
 }) {
   try {
@@ -150,10 +154,13 @@ async function processGroupMessage(payload: {
 
     console.log(`[lark:group:${group.cluster}]`, `Saved msg from ${payload.sender_open_id}: ${payload.content.slice(0, 60)}`)
 
-    // Log to watchdog
+    // Log to watchdog — sender_name is nullable now, so feed the logger
+    // an explicit placeholder rather than letting null leak through.
     const { logger } = await import('@/lib/activity-logger')
     logger.messageReceived({
-      messageId: payload.message_id, senderName: payload.sender_name, cluster: group.cluster,
+      messageId: payload.message_id,
+      senderName: payload.sender_name ?? '— unknown',
+      cluster: group.cluster,
       groupName: group.group_name, chatId: payload.chat_id,
       contentPreview: payload.content, contentLength: payload.content.length, noisePassed: true,
     }).catch(() => {})
@@ -220,7 +227,7 @@ async function processGroupMessage(payload: {
       const resolutionWords = ['dah settle', 'resolved', 'selesai', 'dah fix', 'done', 'ok dah', 'siap', 'completed', 'fixed']
       if (resolutionWords.some(w => payload.content.toLowerCase().includes(w))) {
         const { resolveIncident } = await import('@/lib/incidents')
-        await resolveIncident(matched.id, payload.sender_name, payload.content.slice(0, 100))
+        await resolveIncident(matched.id, payload.sender_name ?? '— unknown', payload.content.slice(0, 100))
       }
 
       await supabaseAdmin.from('lark_group_messages').update({ processed: true, issue_detected: true }).eq('message_id', payload.message_id)

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sortClustersNatural } from '@/lib/clusters/sort'
+import { getAllStaff, sanitizeOwnerLabel, type StaffMember } from '@/lib/staff-directory'
 import {
   categoryGroup,
   WAR_ROOM_GROUP_LIMIT,
@@ -13,6 +14,10 @@ export const dynamic = 'force-dynamic'
 
 // Slim row shape — only the fields the war-room view renders, so
 // the API response stays under a few KB even with all 11 clusters.
+//
+// owner_display is pre-resolved server-side through the staff
+// directory cache (see buildStaffIndex below). Clients should read
+// owner_display directly and NEVER fall back to sender_name / open_id.
 export type WarRoomRow = {
   id: string
   title: string
@@ -28,6 +33,7 @@ export type WarRoomRow = {
   sender_name: string | null
   sender_open_id: string | null
   assigned_to: string | null
+  owner_display: string  // always a clean label — "Fariha", "Corina", or "— unknown"
   status: string
 }
 
@@ -106,6 +112,43 @@ function emptyCluster(cluster: string, name: string | null, health: string | nul
   }
 }
 
+/**
+ * Build a one-shot open_id → StaffMember map for this request. We
+ * prefer to hit the DB once up-front (getAllStaff is a single select)
+ * over N parallel resolveOpenId calls during row mapping, which would
+ * also miss the in-memory cache for cold workers.
+ */
+async function buildStaffIndex(): Promise<Map<string, StaffMember>> {
+  try {
+    const staff = await getAllStaff()
+    return new Map(staff.map(s => [s.open_id, s]))
+  } catch (err) {
+    console.error('[war-room:staff-index]', err instanceof Error ? err.message : 'Unknown')
+    return new Map()
+  }
+}
+
+function ownerDisplayFor(
+  row: { assigned_to: string | null; sender_open_id: string | null; sender_name: string | null },
+  staffIndex: Map<string, StaffMember>,
+): string {
+  // 1. Structured routing PIC — always a clean first name
+  if (row.assigned_to) {
+    const clean = sanitizeOwnerLabel(row.assigned_to)
+    if (clean !== '— unknown') return clean
+  }
+  // 2. Staff directory lookup by open_id
+  if (row.sender_open_id) {
+    const match = staffIndex.get(row.sender_open_id)
+    if (match) {
+      return match.first_name || sanitizeOwnerLabel(match.name)
+    }
+  }
+  // 3. Sanitize whatever sender_name was persisted — raw open_ids
+  //    from the pre-fix webhook get collapsed to "— unknown" here
+  return sanitizeOwnerLabel(row.sender_name)
+}
+
 export async function GET() {
   // 1. Cluster metadata (name + rollup health) from cluster_health_cache.
   //    If the cache is empty (fresh install) the war-room can still render
@@ -113,6 +156,9 @@ export async function GET() {
   const { data: healthRows } = await supabaseAdmin
     .from('cluster_health_cache')
     .select('cluster, cluster_name, health_status')
+
+  // 1b. Pre-load staff for bulk owner resolution
+  const staffIndex = await buildStaffIndex()
 
   const healthByCluster = new Map<string, { name: string | null; status: string | null }>()
   for (const h of healthRows ?? []) {
@@ -140,9 +186,16 @@ export async function GET() {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  const rows = (rowsRaw ?? []) as Array<WarRoomRow & { cluster: string | null }>
+  // 3. Project DB rows → WarRoomRow with pre-resolved owner_display.
+  //    Owner resolution happens here (server-side) so clients never
+  //    need to second-guess raw open_ids — they just render the label.
+  const rawRows = (rowsRaw ?? []) as Array<Omit<WarRoomRow, 'owner_display'> & { cluster: string | null }>
+  const rows: Array<WarRoomRow & { cluster: string | null }> = rawRows.map(row => ({
+    ...row,
+    owner_display: ownerDisplayFor(row, staffIndex),
+  }))
 
-  // 3. Bucket rows into (cluster → group) map.
+  // 4. Bucket rows into (cluster → group) map.
   //    We keep ALL rows per bucket so total/overdue counts reflect the
   //    real open population, not the top-N truncation.
   const byCluster = new Map<string, Record<WarRoomCategoryGroup, WarRoomRow[]>>()
