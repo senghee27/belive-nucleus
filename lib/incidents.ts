@@ -443,11 +443,35 @@ export async function createIncident(
       thread_keywords: keywords,
     }
 
-    const { data: incident, error } = await supabaseAdmin
+    let { data: incident, error } = await supabaseAdmin
       .from('incidents')
       .insert(insertPayload)
       .select()
       .single()
+
+    // Stop-gap: if the reasoning-trace migration has not been applied to
+    // this environment yet, Postgres rejects the insert with
+    //   42703 - column "lark_root_id" (or "assigned_to") does not exist
+    // Strip the new fields and retry once so incoming webhooks keep working
+    // through the migration window. Remove this fallback once all
+    // environments are known to be on migration 20260411000000.
+    if (error && /column .* does not exist/i.test(error.message)) {
+      const missingNewColumns =
+        /lark_root_id|assigned_to|min_reasoning_confidence|merge_count|merged_from_incident_id/i.test(error.message)
+      if (missingNewColumns) {
+        console.warn('[incidents:create] pre-migration schema detected, retrying without reasoning-trace columns')
+        const legacyPayload = { ...insertPayload }
+        delete legacyPayload.lark_root_id
+        delete legacyPayload.assigned_to
+        const retry = await supabaseAdmin
+          .from('incidents')
+          .insert(legacyPayload)
+          .select()
+          .single()
+        incident = retry.data
+        error = retry.error
+      }
+    }
 
     if (error) {
       console.error('[incidents:create]', error.message)
