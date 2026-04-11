@@ -56,7 +56,7 @@ function ageLabel(createdAt: string): string {
 
 interface SituationRowProps {
   row: WarRoomIncidentRow
-  onClick?: (id: string) => void
+  onClick?: (payload: { type: 'incident'; id: string }) => void
 }
 
 export function SituationRow({ row, onClick }: SituationRowProps) {
@@ -78,7 +78,7 @@ export function SituationRow({ row, onClick }: SituationRowProps) {
   return (
     <button
       type="button"
-      onClick={() => onClick?.(row.id)}
+      onClick={() => onClick?.({ type: 'incident', id: row.id })}
       title={row.title}
       className="w-full text-left block transition-colors hover:bg-[#111D30] focus:outline-none focus:bg-[#111D30] cursor-pointer"
       style={{

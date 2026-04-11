@@ -1,12 +1,12 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { CategoryHeader } from './CategoryHeader'
 import { SituationRow } from './SituationRow'
 import { TicketRow } from './TicketRow'
 import { DottedSlot } from './DottedSlot'
 import { ModeToggle } from './ModeToggle'
+import { WarRoomDetailPanel } from './WarRoomDetailPanel'
 import {
   WAR_ROOM_GROUP_LABEL,
   WAR_ROOM_GROUP_LIMIT,
@@ -18,13 +18,30 @@ import type {
   WarRoomClusterTickets,
   WarRoomClusterCommand,
   WarRoomTicketBucket,
+  WarRoomTicketRow,
+  WarRoomIncidentRow,
 } from '@/app/api/clusters/war-room/route'
 
-const COLUMN_WIDTH_PX = 440
+// Spec §3.5: 480px columns, 3 visible per 1440px viewport + partial
+// peek of the 4th. Horizontal scroll reveals C4→C11. Wider than the
+// earlier 440 so the situation line gets ~340px of usable text width
+// after the severity dot, pill, and owner — enough for 12 words at
+// 11.5px without truncating.
+const COLUMN_WIDTH_PX = 480
 const REFRESH_INTERVAL_MS = 30_000
 const COMMAND_BAND_SLOTS = 18 // fixed-band height for Command mode's single incidents band
 const STORAGE_KEY_MODE = 'nucleus_warroom_mode'
 const STORAGE_KEY_CLUSTER = 'nucleus_warroom_cluster'
+
+// Click payload shape emitted by TicketRow + SituationRow
+type RowClickPayload =
+  | { type: 'ticket'; id: string }
+  | { type: 'incident'; id: string }
+
+// Shape the WarRoomDetailPanel consumes — union with the actual row data.
+type SelectedRow =
+  | { type: 'ticket'; row: WarRoomTicketRow }
+  | { type: 'incident'; row: WarRoomIncidentRow }
 
 const STATUS_DOT: Record<string, string> = {
   red: '#E05252',
@@ -50,8 +67,6 @@ function isTicketsResponse(
  * See docs/features/NUCLEUS-CLUSTER-HEALTH-WAR-ROOM-SPEC.md.
  */
 export function WarRoomWall() {
-  const router = useRouter()
-
   // Mode state — persisted to sessionStorage (matches existing pattern
   // in CommandCenter / ClusterHealthWall / PushPrompt).
   const [mode, setMode] = useState<WarRoomMode>('tickets')
@@ -61,6 +76,9 @@ export function WarRoomWall() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [flashCluster, setFlashCluster] = useState<string | null>(null)
+  // Selected row for the detail side panel (§3.4). Reset on mode
+  // change — the selected row may not exist in the new data source.
+  const [selectedRowId, setSelectedRowId] = useState<RowClickPayload | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const columnRefs = useRef<Map<string, HTMLDivElement>>(new Map())
 
@@ -166,9 +184,51 @@ export function WarRoomWall() {
     setTimeout(() => setFlashCluster(null), 900)
   }, [])
 
-  const handleRowClick = useCallback((id: string) => {
-    router.push(`/command/${id}`)
-  }, [router])
+  const handleRowClick = useCallback((payload: RowClickPayload) => {
+    setSelectedRowId(payload)
+  }, [])
+
+  const closeDetail = useCallback(() => {
+    setSelectedRowId(null)
+  }, [])
+
+  // Close the detail panel whenever mode changes — the selected row
+  // may no longer exist in the new data source. Commander can reopen
+  // the same or a different row afterward.
+  useEffect(() => {
+    setSelectedRowId(null)
+  }, [mode])
+
+  // Resolve the currently-selected row from the loaded data. The panel
+  // is driven off this — when data refreshes, the panel content
+  // updates automatically. If the row disappears (e.g. ticket closed
+  // during a poll), the panel closes itself on the next fetch.
+  const selectedRow = useMemo<SelectedRow | null>(() => {
+    if (!selectedRowId || !data) return null
+    if (selectedRowId.type === 'ticket' && data.mode === 'tickets') {
+      for (const cluster of data.clusters) {
+        for (const group of ['maintenance', 'cleaning', 'move_in', 'move_out'] as const) {
+          const found = cluster[group].rows.find(r => r.id === selectedRowId.id)
+          if (found) return { type: 'ticket', row: found }
+        }
+      }
+    }
+    if (selectedRowId.type === 'incident' && data.mode === 'command') {
+      for (const cluster of data.clusters) {
+        const found = cluster.incidents.rows.find(r => r.id === selectedRowId.id)
+        if (found) return { type: 'incident', row: found }
+      }
+    }
+    return null
+  }, [selectedRowId, data])
+
+  // Self-heal: if the row vanished from the latest fetch, drop the
+  // selection so the panel closes gracefully instead of showing stale data.
+  useEffect(() => {
+    if (selectedRowId && !selectedRow && !loading) {
+      setSelectedRowId(null)
+    }
+  }, [selectedRowId, selectedRow, loading])
 
   // Build the cluster-pill strip metadata. Severity dots recompute
   // per mode — spec §2.1 — so flipping the toggle always re-colors
@@ -278,6 +338,11 @@ export function WarRoomWall() {
           <div className="shrink-0 w-2" aria-hidden="true" />
         </div>
       )}
+
+      {/* Detail slide-in — renders on top of the grid without unmounting
+          it. Grid stays scrolled and interactive behind the panel scrim,
+          so the commander can click another row to swap content. */}
+      <WarRoomDetailPanel selected={selectedRow} onClose={closeDetail} />
     </div>
   )
 }
@@ -297,7 +362,7 @@ interface TicketsColumnProps {
   cluster: WarRoomClusterTickets
   isFlashing: boolean
   registerRef: (el: HTMLDivElement | null) => void
-  onRowClick: (id: string) => void
+  onRowClick: (payload: RowClickPayload) => void
 }
 
 function TicketsColumn({ cluster, isFlashing, registerRef, onRowClick }: TicketsColumnProps) {
@@ -356,7 +421,7 @@ interface CommandColumnProps {
   cluster: WarRoomClusterCommand
   isFlashing: boolean
   registerRef: (el: HTMLDivElement | null) => void
-  onRowClick: (id: string) => void
+  onRowClick: (payload: RowClickPayload) => void
 }
 
 function CommandColumn({ cluster, isFlashing, registerRef, onRowClick }: CommandColumnProps) {

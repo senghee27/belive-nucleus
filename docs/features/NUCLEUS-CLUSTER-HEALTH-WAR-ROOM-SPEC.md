@@ -43,12 +43,34 @@ This means flipping the toggle re-colors the pills, which is intentional — the
 All rows are single-line 38px cards in both modes. Row content differs by mode:
 
 ### 3.1 Tickets Mode Row
-**Line 1:** severity dot · SLA pill (`2h OVR`, `3d OVR`, `12h`) · age · human-written ticket title · owner
+
+**Line 1:** severity dot · SLA pill (`43d OVR`, `12h`) · **situation line** · owner
 - Source: operational ticketing tables
 - Ranking: **overdue first, then age descending within each SLA bucket**
-- The human title is shown as-is (trusted)
-- **AI summary available on hover tooltip** — the AI interpretation is one hover away but does not override the human's words by default. Matches the transparency-before-autonomy philosophy.
-- Ticket# visible on hover and in detail drawer, never on the main row
+
+**The situation line is the core of this feature.** It must answer *"what is physically broken and why isn't it fixed yet?"* — nothing else. Format: `{what is broken, where} · {blocker or state}`. Mandatory blocker clause; when ticketing data has no update, fallback is literal `no update`. The absence of data is itself diagnostic — a column showing "no update" 31 times tells the commander the ops system is silent on that cluster.
+
+**Examples of correct situation lines:**
+- `Washer broken at B-12-04 · tenant escalated twice`
+- `Tile popped in corridor · contractor quoted, not scheduled`
+- `Aircon compressor failed 21-08 · vendor waiting on KL parts`
+- `Leaking pipe 11-01 · temp patch holding, permanent fix pending`
+- `Dryer drum noise · no update`
+
+**Forbidden phrasings (the current build's failure mode):**
+- ~~"This is an overdue normal priority maintenance request"~~ (meta-commentary, tells nothing)
+- ~~"Critical priority maintenance ticket overdue by 6 days"~~ (duplicates the pill)
+- ~~"High priority maintenance request with SLA..."~~ (bureaucratic filler)
+
+The situation line must never mention priority, SLA, overdue status, "ticket," or "request" — those are already carried by the severity dot, SLA pill, and section header. Every word in the line must earn its place by describing physical reality or blockers.
+
+**AI summarizer prompt** (runs during classification, cached in `ai_situation_line` field on the ticket record):
+
+> Given this maintenance/cleaning/move ticket, write a ≤12-word situation report in the format: `{what is physically broken or needs action, where} · {current blocker or state}`. Do not mention priority, SLA, overdue status, or the words "ticket" or "request" — those are shown separately. Use concrete nouns. If the blocker is unknown from available data, write "no update" as the second clause. Examples: "Washer broken at B-12-04 · tenant escalated twice" / "Tile popped in corridor · contractor quoted, not scheduled" / "Dryer drum noise · no update".
+
+Summaries are regenerated when the ticket is updated (new comment, status change, owner reassignment) so "no update" correctly transitions to a real blocker once data arrives.
+
+**Click behavior:** every row is clickable, opens the detail drawer (§3.4).
 
 ### 3.2 Command Mode Row
 **Line 1 (compact, monospace dim):** severity dot · SLA pill · age
@@ -61,7 +83,27 @@ All rows are single-line 38px cards in both modes. Row content differs by mode:
 
 ### 3.3 Why Asymmetric Treatment
 
-Tickets have human-written titles from the ops system — the AI's marginal value is "clean up shorthand and add context," nice but not load-bearing. Hover is a fair cost. Incidents come from raw Lark chat where the AI is doing the load-bearing work of turning "aircond tak sejuk dah 3 hari" into a diagnosed situation. Each data source gets the treatment matching how much the AI is actually contributing.
+Tickets have operational data in a ticketing system — the AI's job is to distill it into a physical-reality situation line with a blocker. Incidents come from raw Lark chat where the AI is doing load-bearing work turning "aircond tak sejuk dah 3 hari" into a diagnosed situation. Each data source gets the treatment matching its raw input quality.
+
+### 3.4 Detail Side Panel
+
+Every row in either mode is clickable. Click opens a **400px right-side slide-in panel** covering the rightmost portion of the viewport, keeping the grid visible behind it so the commander can jump between rows without losing scroll position or mental context.
+
+**Panel contents (top to bottom):**
+- Header: ticket#/incident_id, cluster, owner, current status, close (×) button
+- Full human-written title (tickets) or raw Lark message (incidents)
+- Full AI situation line with the 6-step Reasoning Trace inline, each step's conclusion + confidence + rationale visible
+- Timeline: status changes, owner reassignments, comments, photos if any
+- Raw Lark source messages for incidents; ticket history for tickets
+- Action buttons: reassign, close, escalate, add comment
+
+The panel is the same pattern as the `/reasoning/:id` page from the Reasoning Trace spec, just rendered as a slide-in instead of a standalone route. Clicking another row while the panel is open swaps the content without animation — no close-reopen flicker.
+
+## 3.5 Column Width and Viewport Density
+
+Column width: **480px** (up from 440px). At 1440px viewport, exactly **3 columns visible per screen**, plus partial peek of the 4th to signal scrollability. Horizontal scroll reveals C4–C11 in sequence. The wider column buys breathing room for the situation line + blocker clause without truncation.
+
+Why 3 instead of the earlier ~3.3: honest spacing beats cramped density. The situation line is the page's entire value proposition — if it truncates, the feature fails. 480px gives the line ~340px of usable text width after severity dot, pill, and owner, enough for 12 words at 11.5px without ellipsis.
 
 ---
 
@@ -161,4 +203,4 @@ Still over a strict 900px budget, but the gap is now manageable. Real-world fit 
 
 ## 11. Claude Code Prompt
 
-> Restructure `/clusters` into a two-mode war-room per `docs/features/NUCLEUS-CLUSTER-HEALTH-WAR-ROOM-SPEC.md`: segmented toggle `[Tickets] [Command]` top-left, preserving scroll position and selected cluster on mode change. **Tickets mode** — 4 bands (Maintenance top 10, Cleaning/MoveIn/MoveOut top 3 each), 1-line rows showing human ticket title + SLA/age/owner, sorted by overdue-first then age-desc, AI summary on hover tooltip. **Command mode** — single Incidents band filtered to `attention_required = true` from the Reasoning Trace, 2-line rows with always-visible AI summary, `[unclassified]` amber raw-Lark fallback, sorted severity→recency. Fixed-band grid with dotted placeholder slots, strict top-N enforcement. Cluster pill severity dots recompute per mode. Fix `resolveOwnerName()` to return `— unknown` on failure system-wide, never raw `cli_xxx`/`ou_xxx`. Apply `sortClustersNatural()` system-wide across Command Center, Briefings, Watchdog, Mobile PWA, Learning Engine. Add `ai_summary`, `is_classified`, `raw_lark_text` fields to incidents. **Critical data-source separation:** Tickets mode reads only from operational ticketing tables, Command mode reads only from the incidents/Lark classification pipeline — the same issue must never appear in both views.
+> Restructure `/clusters` into a two-mode war-room per `docs/features/NUCLEUS-CLUSTER-HEALTH-WAR-ROOM-SPEC.md`. **Critical content quality fix:** replace the current AI summarizer which produces meta-commentary ("This is an overdue normal priority maintenance request") with a situation-line generator following the prompt in §3.1 that outputs `{what is broken, where} · {blocker or state}` with mandatory "no update" fallback. Regenerate summaries on ticket updates. Store in `ai_situation_line` field. **Layout:** 480px columns, 3 visible per 1440px viewport, horizontal scroll for C1→C11. Segmented toggle `[Tickets] [Command]` top-left, preserving scroll + cluster on mode change. **Tickets mode:** 4 bands (Maintenance top 10, Cleaning/MoveIn/MoveOut top 3), 1-line rows showing severity dot + SLA pill + situation line + owner, sorted overdue-first then age-desc. **Command mode:** single Incidents band filtered to `attention_required = true` from the Reasoning Trace, 2-line rows with always-visible AI summary, `[unclassified]` amber raw-Lark fallback, sorted severity→recency. **Detail side panel:** 400px right slide-in on row click, shows full Reasoning Trace inline, timeline, actions. Fixed-band grid with dotted placeholders, strict top-N. Cluster pill severity dots recompute per mode. Fix `resolveOwnerName()` to return `— unknown` on failure system-wide. Apply `sortClustersNatural()` system-wide. Add `ai_situation_line`, `ai_summary`, `is_classified`, `raw_lark_text` fields. **Data-source separation:** Tickets mode reads only operational tables, Command mode reads only the incidents pipeline — the same issue must never appear in both views.

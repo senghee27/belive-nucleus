@@ -7,17 +7,21 @@ import type { WarRoomTicketRow } from '@/app/api/clusters/war-room/route'
  * TicketRow — 1-line war-room row for Tickets mode.
  *
  * Spec §3.1:
- *   severity dot · SLA pill · age · human ticket title · owner
+ *   severity dot · SLA pill · situation line · owner
  *
- * - Source: operational ticketing tables (ai_report_tickets)
- * - Human title rendered as-is (trusted ops system wording)
- * - AI summary lives on the hover tooltip, NOT inline — Tickets
- *   mode trusts the human's words, Command mode is where AI does
- *   the load-bearing work
- * - P1 coral tinting applied when the ticket is overdue (overdue IS
- *   the P1 condition in Tickets mode — SLA state drives severity)
- * - Owner is pre-resolved server-side via sanitizeOwnerLabel, so
- *   raw open_ids can never leak through
+ * The situation line is `{what is broken, where} · {blocker or state}`
+ * (see lib/tickets/situation-line.ts), generated during upsertTickets
+ * and backfilled once by scripts/backfill/situation-lines.ts. The age
+ * is NOT rendered as a separate column — the SLA pill carries timing
+ * information and adding age would duplicate the signal.
+ *
+ * Row format, L→R, fixed order:
+ *   1. severity dot (1.5×1.5, sla-state colored)
+ *   2. SLA pill (reuses OverduePill; hidden when not overdue and not due-soon)
+ *   3. situation line (flex-1, clamps to 1 line)
+ *   4. owner (dim, trailing, pre-resolved — never a raw open_id)
+ *
+ * Click behavior: opens the detail side-panel via onClick({ type, id }).
  */
 
 const SEV_DOT: Record<string, string> = {
@@ -26,26 +30,17 @@ const SEV_DOT: Record<string, string> = {
   GREEN: '#4B5A7A',
 }
 
-function ageLabel(age_days: number): string {
-  if (age_days < 1) {
-    const hours = Math.round(age_days * 24)
-    return `${hours}h`
-  }
-  if (age_days < 30) return `${Math.round(age_days)}d`
-  if (age_days < 365) return `${Math.round(age_days / 30)}mo`
-  return `${Math.round(age_days / 365)}y`
-}
-
 interface TicketRowProps {
   row: WarRoomTicketRow
-  onClick?: (ticketId: string) => void
+  onClick?: (payload: { type: 'ticket'; id: string }) => void
 }
 
 export function TicketRow({ row, onClick }: TicketRowProps) {
   const isOverdue = row.sla_overdue
   const dotColor = SEV_DOT[row.severity] ?? '#4B5A7A'
-  // Tooltip content — human description + ticket# + unit + property
-  // so hover gives the full context without needing a drawer click.
+  // Tooltip — full human description + ticket# + unit + property
+  // so hover still works for commanders who prefer scanning over
+  // opening the detail drawer.
   const tooltipBits: string[] = []
   if (row.hover_description) tooltipBits.push(row.hover_description)
   tooltipBits.push(`#${row.ticket_id}`)
@@ -56,7 +51,7 @@ export function TicketRow({ row, onClick }: TicketRowProps) {
   return (
     <button
       type="button"
-      onClick={() => onClick?.(row.ticket_id)}
+      onClick={() => onClick?.({ type: 'ticket', id: row.id })}
       title={tooltip}
       className="w-full text-left block transition-colors hover:bg-[#111D30] focus:outline-none focus:bg-[#111D30] cursor-pointer"
       style={{
@@ -66,24 +61,21 @@ export function TicketRow({ row, onClick }: TicketRowProps) {
         padding: '8px 6px 8px 8px',
       }}
     >
-      <div className="flex items-center gap-2 text-[11px] leading-tight">
+      <div className="flex items-center gap-2 text-[11.5px] leading-tight">
         {/* Severity dot */}
         <span
           className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
           style={{ backgroundColor: dotColor }}
         />
-        {/* SLA pill — reuses the shared OverduePill; tickets project
-            sla_due_at as a synthetic escalation_due_at so the pill
-            works unchanged. */}
+        {/* SLA pill — reuses OverduePill by projecting sla_date into
+            a synthetic escalation_due_at (end-of-day UTC). */}
         <OverduePill
           escalation_due_at={row.sla_due_at}
           escalated={false}
         />
-        {/* Age — longest-open bubble the eye to the left */}
-        <span className="font-[family-name:var(--font-jetbrains-mono)] text-[10px] text-[#4B5A7A] shrink-0">
-          {ageLabel(row.age_days)}
-        </span>
-        {/* Human title — trusted, rendered as-is */}
+        {/* Situation line — the hero of this feature. One clamp, no
+            truncation if possible; 480px columns × 340px usable width
+            is budgeted for 12 words at 11.5px per spec §3.5. */}
         <span
           className="flex-1 min-w-0 text-[#D4DAEA]"
           style={{

@@ -53,10 +53,20 @@ export type WarRoomIncidentRow = {
 }
 
 // Ticket-shaped row (Tickets mode). Pre-derived category + pre-resolved owner.
+//
+// `title` is the AI-generated situation_line in the shape
+// `{what is broken, where} · {blocker or state}`. See
+// lib/tickets/situation-line.ts for the generator. If the generator
+// hasn't run yet (brand-new ticket, pre-migration DB) the API falls
+// back to a "{short description} · no update" stub so the row still
+// renders usable text instead of going blank.
+//
+// `hover_description` carries the full human issue_description for
+// the detail panel / hover tooltip.
 export type WarRoomTicketRow = {
   id: string
   ticket_id: string                // BLV-RQ-XXXXXX
-  title: string                    // human-written (issue_description or summary)
+  title: string                    // ai_situation_line (or defensive fallback)
   hover_description: string | null // full issue_description for hover tooltip
   category: string                 // derived from issue_description text
   sla_date: string | null          // date string ("2026-04-15")
@@ -215,7 +225,8 @@ async function buildTicketsResponse(
     .from('ai_report_tickets')
     .select(`
       id, ticket_id, issue_description, summary, owner_name,
-      property, cluster, unit_number, age_days, sla_date, sla_overdue, status
+      property, cluster, unit_number, age_days, sla_date, sla_overdue, status,
+      ai_situation_line
     `)
     .eq('status', 'open')
     .order('sla_overdue', { ascending: false })
@@ -239,6 +250,7 @@ async function buildTicketsResponse(
     sla_date: string | null
     sla_overdue: boolean | null
     status: string
+    ai_situation_line: string | null
   }>
 
   // Project + bucket by cluster + category group
@@ -255,7 +267,20 @@ async function buildTicketsResponse(
 
     const slaDueAt = t.sla_date ? new Date(`${t.sla_date}T23:59:59Z`).toISOString() : null
     const severity = deriveTicketSeverity(Boolean(t.sla_overdue), slaDueAt)
-    const title = (t.summary ?? description ?? t.ticket_id).slice(0, 120)
+    // Title priority: LLM-generated situation line → defensive
+    // "{truncated human text} · no update" → bare ticket_id. The
+    // generator runs during upsertTickets and the backfill script,
+    // so any row without ai_situation_line is either pre-backfill
+    // legacy data or a ticket that failed generation. Render a
+    // readable stub rather than going blank.
+    const situationLine = (t.ai_situation_line ?? '').trim()
+    let title: string
+    if (situationLine) {
+      title = situationLine
+    } else {
+      const stub = (t.summary ?? description ?? t.ticket_id).trim().split(/[.·]/)[0].slice(0, 100)
+      title = stub ? `${stub} · no update` : `${t.ticket_id} · no update`
+    }
 
     const ticketRow: WarRoomTicketRow = {
       id: t.id,
