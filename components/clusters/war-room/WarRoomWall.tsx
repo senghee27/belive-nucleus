@@ -22,12 +22,14 @@ import type {
   WarRoomIncidentRow,
 } from '@/app/api/clusters/war-room/route'
 
-// Spec §3.5: 480px columns, 3 visible per 1440px viewport + partial
-// peek of the 4th. Horizontal scroll reveals C4→C11. Wider than the
-// earlier 440 so the situation line gets ~340px of usable text width
-// after the severity dot, pill, and owner — enough for 12 words at
-// 11.5px without truncating.
-const COLUMN_WIDTH_PX = 480
+// Spec §3.5: exactly 3 columns visible per viewport, regardless of
+// actual screen width. A fixed 480px only hit "3 visible" at exactly
+// 1440px — on wider monitors you'd see 4+ and on narrower ones you'd
+// see 2. The responsive rule below uses `calc((100% - 2 * gap) / 3)`
+// so every viewport gets exactly 3 visible (the 2 gaps of 12px from
+// `gap-3` are subtracted to avoid overflow). Floored at 440px so
+// tiny browsers still render legible rows.
+const COLUMN_WIDTH_CSS = 'max(440px, calc((100% - 24px) / 3))'
 const REFRESH_INTERVAL_MS = 30_000
 const COMMAND_BAND_SLOTS = 18 // fixed-band height for Command mode's single incidents band
 const STORAGE_KEY_MODE = 'nucleus_warroom_mode'
@@ -373,7 +375,7 @@ function TicketsColumn({ cluster, isFlashing, registerRef, onRowClick }: Tickets
       ref={registerRef}
       className="shrink-0 flex flex-col rounded-lg border border-[#1A2035] bg-[#0D1525] overflow-hidden transition-shadow"
       style={{
-        width: COLUMN_WIDTH_PX,
+        width: COLUMN_WIDTH_CSS,
         scrollSnapAlign: 'start',
         boxShadow: isFlashing ? '0 0 0 2px #F2784B, 0 0 20px rgba(242,120,75,0.4)' : undefined,
       }}
@@ -435,7 +437,7 @@ function CommandColumn({ cluster, isFlashing, registerRef, onRowClick }: Command
       ref={registerRef}
       className="shrink-0 flex flex-col rounded-lg border border-[#1A2035] bg-[#0D1525] overflow-hidden transition-shadow"
       style={{
-        width: COLUMN_WIDTH_PX,
+        width: COLUMN_WIDTH_CSS,
         scrollSnapAlign: 'start',
         boxShadow: isFlashing ? '0 0 0 2px #F2784B, 0 0 20px rgba(242,120,75,0.4)' : undefined,
       }}
