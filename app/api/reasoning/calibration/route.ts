@@ -72,17 +72,33 @@ export async function GET() {
     actual: number
     gap: number
     sample_size: number
+    decided_total: number
   }> = []
 
   for (const [key, { sum, count }] of traceMap.entries()) {
     const [step, category] = key.split('|')
     const stated = Math.round(sum / count)
     const catRev = catMap.get(category)
-    const actual = catRev && catRev.total > 0 ? Math.round((catRev.approved / catRev.total) * 100) : 0
-    rows.push({ step, category, stated, actual, gap: stated - actual, sample_size: count })
+    const decidedTotal = catRev?.total ?? 0
+    const actual = decidedTotal > 0 ? Math.round(((catRev?.approved ?? 0) / decidedTotal) * 100) : 0
+    rows.push({
+      step,
+      category,
+      stated,
+      actual,
+      gap: stated - actual,
+      sample_size: count,
+      decided_total: decidedTotal,
+    })
   }
 
-  rows.sort((a, b) => b.gap - a.gap)
+  // Sort by gap — rows with no decided revisions sink to the bottom
+  // regardless of their reported gap, since that gap is meaningless.
+  rows.sort((a, b) => {
+    if (a.decided_total === 0 && b.decided_total > 0) return 1
+    if (b.decided_total === 0 && a.decided_total > 0) return -1
+    return b.gap - a.gap
+  })
 
   return NextResponse.json({ calibration: rows })
 }
