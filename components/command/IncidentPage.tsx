@@ -26,13 +26,16 @@ export function IncidentPage({ incident: initial, timeline: initialTimeline }: {
 
   const cat = ISSUE_CATEGORIES[(incident as Record<string, unknown>).category as string ?? 'other'] ?? ISSUE_CATEGORIES.other
   const status = STATUS_STYLES[incident.status] ?? STATUS_STYLES.new
-  // Deep-link to the original Lark message: prefer lark_root_id (set when
-  // the incident was born from a reply in an existing thread), fall back to
-  // source_message_id (the triggering message). source_lark_message_id is
-  // an older column that is never populated — ignore it.
-  const threadRootId = incident.lark_root_id ?? incident.source_message_id ?? null
-  const larkDeepLink = threadRootId
-    ? `https://applink.larksuite.com/client/message/open?messageId=${threadRootId}`
+  // Lark AppLink to reopen the incident's chat in the Lark client.
+  //
+  // Lark's AppLink protocol only officially supports /client/chat/open?openChatId=…
+  // — there is no public message-level deeplink (the /client/message/open path
+  // we tried earlier returns "This page is unavailable"). So this button opens
+  // the chat and lets Lee scroll to the message himself. Still gated on chat_id
+  // being present — DM-sourced or manual incidents without a chat_id hide the
+  // button entirely.
+  const larkDeepLink = incident.chat_id
+    ? `https://applink.larksuite.com/client/chat/open?openChatId=${incident.chat_id}`
     : null
 
   const handleDecide = useCallback(async (id: string, action: string, instruction?: string) => {
@@ -103,14 +106,14 @@ export function IncidentPage({ incident: initial, timeline: initialTimeline }: {
         <div className="flex items-center gap-2">
           {larkDeepLink ? (
             <a href={larkDeepLink} target="_blank" rel="noopener noreferrer"
-              title="Opens original message in Lark"
+              title="Opens the chat in Lark (scroll to find the original message)"
               className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#111D30] text-[10px] text-[#8A9BB8] hover:text-[#F2784B] hover:bg-[#F2784B]/10 transition-colors">
-              <ExternalLink size={11} /> 🔗 View in Lark
+              <ExternalLink size={11} /> 🔗 Open chat in Lark
             </a>
           ) : (
-            <span title="Source message unavailable"
+            <span title="No chat_id on this incident — nothing to open"
               className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#111D30] text-[10px] text-[#2A3550] cursor-not-allowed opacity-50">
-              <ExternalLink size={11} /> 🔗 View in Lark
+              <ExternalLink size={11} /> 🔗 Open chat in Lark
             </span>
           )}
           <button onClick={() => { fetch(`/api/incidents/${incident.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ severity: incident.severity === 'GREEN' ? 'YELLOW' : 'RED' }) }); toast.success('Escalated') }}
